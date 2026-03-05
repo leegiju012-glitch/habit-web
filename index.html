@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>7일 챌린지</title>
+
+  <link rel="stylesheet" href="style.css" />
+
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#0f172a">
+
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+</head>
+<body>
+  <div class="container">
+    <div class="topbar">
+      <div class="brand">
+        <div class="logo"></div>
+        <div>
+          <div class="title">7일 챌린지</div>
+          <div class="subtitle">3~5명 자동 그룹 · 사진 인증</div>
+        </div>
+      </div>
+      <span class="pill" id="statusPill">오프라인</span>
+    </div>
+
+    <div class="card">
+      <p class="section-title">로비</p>
+      <h1 class="big" id="headline">오늘도 인증합시다.</h1>
+      <p class="desc" id="subline">로그인 후 대기열에 들어가면 자동으로 그룹이 만들어져요.</p>
+
+      <div class="row">
+        <button class="btn primary" id="loginBtn">Google로 로그인</button>
+        <button class="btn ghost" id="logoutBtn" style="display:none;">로그아웃</button>
+
+        <button class="btn success" id="joinQueueBtn" style="display:none;">그룹 매칭 시작</button>
+        <button class="btn ghost" id="goGroupBtn" style="display:none;">내 그룹으로 가기</button>
+      </div>
+
+      <div class="profile" id="profileBox" style="display:none;">
+        <div class="avatar" id="avatarBox"></div>
+        <div style="min-width:0;">
+          <div class="name" id="userName">-</div>
+          <div class="mail" id="userMail">-</div>
+        </div>
+      </div>
+
+      <p class="notice">
+        ⚠️ 카카오톡 인앱 브라우저에서는 로그인/업로드가 불안정할 수 있어요. 가능하면 Safari/Chrome으로 열어주세요.
+      </p>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+
+  <script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/service-worker.js');
+  }
+  </script>
+
+  </body>
+</html>
