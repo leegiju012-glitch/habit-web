@@ -21,9 +21,19 @@ service cloud.firestore {
         || (
           signedIn()
           && exists(/databases/$(database)/documents/queue/$(uid))
-          && request.resource.data.diff(resource.data).changedKeys().hasOnly(["currentGroupId"])
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(["currentGroupId", "currentGroupInviteCode"])
           && resource.data.currentGroupId == null
           && request.resource.data.currentGroupId is string
+          && request.resource.data.currentGroupInviteCode == null
+        )
+        || (
+          signedIn()
+          && resource.data.currentGroupId is string
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(["currentGroupId", "currentGroupInviteCode"])
+          && request.resource.data.currentGroupId == null
+          && request.resource.data.currentGroupInviteCode == null
+          && exists(/databases/$(database)/documents/groups/$(resource.data.currentGroupId))
+          && get(/databases/$(database)/documents/groups/$(resource.data.currentGroupId)).data.ownerUid == request.auth.uid
         );
     }
 
@@ -43,6 +53,11 @@ service cloud.firestore {
       allow read: if signedIn();
       allow create: if signedIn();
       allow update: if signedIn();
+      allow delete: if signedIn()
+        && resource.data.mode == "private"
+        && resource.data.ownerUid == request.auth.uid
+        && resource.data.members is list
+        && resource.data.members.size() < 2;
     }
 
     // checkins/{groupId_uid_date}

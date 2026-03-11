@@ -35,8 +35,29 @@
         <button class="btn primary" id="loginBtn">Google로 로그인</button>
         <button class="btn ghost" id="logoutBtn" style="display:none;">로그아웃</button>
 
-        <button class="btn success" id="joinQueueBtn" style="display:none;">그룹 매칭 시작</button>
+        <button class="btn success" id="joinQueueBtn" style="display:none;">랜덤 매칭 시작</button>
         <button class="btn ghost" id="goGroupBtn" style="display:none;">내 그룹으로 가기</button>
+      </div>
+
+      <div id="privateGroupBox" style="margin-top:12px; display:none;">
+        <p class="section-title" style="margin-bottom:8px;">개인 그룹 매칭</p>
+        <div style="display:flex; gap:8px; margin-bottom:8px;">
+          <button id="createPrivateGroupBtn" class="btn ghost" style="width:auto; padding:10px 14px; border-radius:12px;">
+            그룹 코드 생성
+          </button>
+          <div class="pill" id="myInviteCodePill" style="display:none;"></div>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <input
+            id="inviteCodeInput"
+            placeholder="그룹 코드 입력"
+            maxlength="8"
+            style="flex:1; padding:10px 12px; border-radius:12px; border:1px solid #3a3f55; background:#0f172a; color:white; text-transform:uppercase;"
+          />
+          <button id="joinPrivateGroupBtn" class="btn ghost" style="width:auto; padding:10px 14px; border-radius:12px;">
+            코드로 입장
+          </button>
+        </div>
       </div>
 
       <div class="profile" id="profileBox" style="display:none;">
@@ -47,13 +68,25 @@
         </div>
       </div>
 
+      <div id="nicknameBox" style="margin-top:12px; display:flex; gap:8px;">
+        <input
+          id="nicknameInput"
+          placeholder="닉네임 (2~10자)"
+          maxlength="10"
+          style="flex:1; padding:10px 12px; border-radius:12px; border:1px solid #3a3f55; background:#0f172a; color:white;"
+        />
+        <button id="saveNickBtn" class="btn ghost" style="width:auto; padding:10px 14px; border-radius:12px;">
+          닉네임 저장
+        </button>
+      </div>
+
       <p class="notice">
         ⚠️ 카카오톡 인앱 브라우저에서는 로그인/업로드가 불안정할 수 있어요. 가능하면 Safari/Chrome으로 열어주세요.
       </p>
     </div>
   </div>
 
-  <script type="module" src="app.js?v=20260311a"></script>
+  <script type="module" src="app.js?v=20260311e"></script>
 
   </body>
 </html>

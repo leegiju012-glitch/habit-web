@@ -28,15 +28,6 @@
       <p class="section-title">상태</p>
       <div class="pill" id="status">불러오는 중...</div>
 
-      <div style="margin-top:14px; display:flex; gap:8px;">
-  <input id="nicknameInput" placeholder="닉네임 (2~10자)"
-         style="flex:1; padding:10px 12px; border-radius:12px; border:1px solid #3a3f55; background:#0f172a; color:white;">
-  <button id="saveNickBtn"
-          style="padding:10px 14px; border-radius:12px; background:#6366f1; color:white; border:none; cursor:pointer;">
-    변경
-  </button>
-</div>
-
       <div class="file">
         <div class="section-title" style="margin:0 0 8px;">오늘 인증 사진</div>
         <input type="file" id="fileInput" accept="image/*" />
@@ -44,6 +35,7 @@
 
       <div class="row">
         <button class="btn success" id="checkinBtn">오늘 인증하기</button>
+        <button class="btn ghost" id="ownerActionBtn" style="display:none;">챌린지 시작</button>
         <button id="leaveGroupBtn" class="danger-btn">그룹 나가기</button>      
       </div>
 
@@ -55,6 +47,6 @@
     </div>
   </div>
 
-  <script type="module" src="group.js?v=20260311a"></script>
+  <script type="module" src="group.js?v=20260311g"></script>
 </body>
 </html>
