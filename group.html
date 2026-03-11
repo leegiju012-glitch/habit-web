@@ -6,11 +6,12 @@
   <title>내 그룹</title>
   <link rel="stylesheet" href="style.css" />
 </head>
-<div id="photoModal" class="photo-modal" style="display:none;">
-  <div class="photo-back" id="photoBack"></div>
-  <img id="photoViewer" class="photo-viewer" />
-</div>
 <body>
+  <div id="photoModal" class="photo-modal" style="display:none;">
+    <div class="photo-back" id="photoBack"></div>
+    <img id="photoViewer" class="photo-viewer" />
+  </div>
+
   <div class="container">
     <div class="topbar">
       <div class="brand">
@@ -38,7 +39,7 @@
 
       <div class="file">
         <div class="section-title" style="margin:0 0 8px;">오늘 인증 사진</div>
-        <input type="file" id="fileInput" accept="image/*" multiple />
+        <input type="file" id="fileInput" accept="image/*" />
       </div>
 
       <div class="row">
@@ -54,6 +55,6 @@
     </div>
   </div>
 
-  <script type="module" src="group.js"></script>
+  <script type="module" src="group.js?v=20260311a"></script>
 </body>
 </html>

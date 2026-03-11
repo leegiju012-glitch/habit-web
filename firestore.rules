@@ -1,0 +1,57 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // users/{uid}
+    // - 본인은 자신의 프로필/닉네임/토큰/그룹 상태를 수정 가능
+    // - 매칭 트랜잭션을 위해, queue에 있는 유저의 currentGroupId 설정은 로그인 사용자에게 허용
+    match /users/{uid} {
+      allow read: if signedIn();
+
+      allow create: if isOwner(uid);
+
+      allow update: if isOwner(uid)
+        || (
+          signedIn()
+          && exists(/databases/$(database)/documents/queue/$(uid))
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(["currentGroupId"])
+          && resource.data.currentGroupId == null
+          && request.resource.data.currentGroupId is string
+        );
+    }
+
+    // queue/{uid}
+    // - 본인은 자신의 대기열 등록 가능
+    // - 매칭 트랜잭션에서 여러 유저 queue 삭제가 필요하므로 로그인 사용자 삭제 허용
+    match /queue/{uid} {
+      allow read: if signedIn();
+      allow create, update: if isOwner(uid);
+      allow delete: if signedIn();
+    }
+
+    // groups/{groupId}
+    // - 매칭 시 생성 필요
+    // - 그룹 상세 조회는 로그인 사용자에게 허용
+    match /groups/{groupId} {
+      allow read: if signedIn();
+      allow create: if signedIn();
+      allow update: if signedIn();
+    }
+
+    // checkins/{groupId_uid_date}
+    // - 본인 체크인만 생성/수정 가능
+    // - 읽기는 로그인 사용자 허용 (그룹 화면 렌더링용)
+    match /checkins/{checkinId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+  }
+}

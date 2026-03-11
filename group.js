@@ -25,6 +25,8 @@ const fileInput = document.getElementById("fileInput");
 const checkinBtn = document.getElementById("checkinBtn");
 const leaveGroupBtn = document.getElementById("leaveGroupBtn");
 const backBtn = document.getElementById("backBtn");
+const nicknameInput = document.getElementById("nicknameInput");
+const saveNickBtn = document.getElementById("saveNickBtn");
 const photoModal = document.getElementById("photoModal");
 const photoViewer = document.getElementById("photoViewer");
 const photoBack = document.getElementById("photoBack");
@@ -63,6 +65,25 @@ onAuthStateChanged(auth, async (user) => {
   }
 
   const myData = userSnap.data();
+
+  if (nicknameInput) {
+    nicknameInput.value = myData.nickname || myData.name || "";
+  }
+
+  if (saveNickBtn && nicknameInput) {
+    saveNickBtn.onclick = async () => {
+      const nickname = nicknameInput.value.trim();
+
+      if (nickname.length < 2 || nickname.length > 10) {
+        alert("닉네임은 2~10자로 입력해 주세요.");
+        return;
+      }
+
+      await updateDoc(userRef, { nickname });
+      alert("닉네임이 변경되었습니다.");
+      location.reload();
+    };
+  }
 
   if(!myData.currentGroupId){
     statusEl.textContent="현재 참여 중인 그룹이 없습니다.";
@@ -155,12 +176,20 @@ onAuthStateChanged(auth, async (user) => {
 
       const file=fileInput.files[0];
       const date=todayStr();
+      const todayCheckinRef = doc(db,"checkins",groupId+"_"+user.uid+"_"+date);
+      const todayCheckinSnap = await getDoc(todayCheckinRef);
+
+      if (todayCheckinSnap.exists()) {
+        alert("오늘은 이미 인증이 완료되었습니다.");
+        return;
+      }
+
       const storageRef=ref(storage,"checkins/"+groupId+"/"+user.uid+"_"+date+".jpg");
 
       await uploadBytes(storageRef,file);
       const imageURL=await getDownloadURL(storageRef);
 
-      await setDoc(doc(db,"checkins",groupId+"_"+user.uid+"_"+date),{
+      await setDoc(todayCheckinRef,{
         groupId,
         uid:user.uid,
         date,
