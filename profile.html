@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>내 프로필</title>
+  <link rel="stylesheet" href="style.css?v=20260312c" />
+  <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <p class="section-title">내 프로필</p>
+
+      <div class="row" id="navBox">
+        <button class="btn ghost compact" id="backLobbyBtn">로비로 돌아가기</button>
+        <button class="btn ghost compact" id="goGroupBtn" style="display:none;">내 그룹으로 가기</button>
+        <button class="btn ghost compact" id="goAdminBtn" style="display:none;">운영 대시보드</button>
+      </div>
+
+      <div class="profile" id="profileBox">
+        <div class="avatar" id="avatarBox"></div>
+        <div style="min-width:0;">
+          <div class="name" id="userName">-</div>
+          <div class="mail" id="userMail">-</div>
+        </div>
+      </div>
+
+      <div class="panel-block">
+        <div class="pill" id="streakNow">현재 챌린지 연속: 0일</div>
+        <div class="pill" id="streakLast" style="margin-left:6px;">이전 챌린지 기록: 0일</div>
+      </div>
+
+      <div class="panel-block">
+        <div class="pill" id="groupStatus">현재 참여 방: 없음</div>
+      </div>
+
+      <div id="nicknameBox" class="input-row panel-block">
+        <input id="nicknameInput" class="field" placeholder="닉네임 (2~10자)" maxlength="10" />
+        <button id="saveNickBtn" class="btn ghost compact">닉네임 저장</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="profile.js?v=20260312c"></script>
+</body>
+</html>

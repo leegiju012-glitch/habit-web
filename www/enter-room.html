@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>방 참가</title>
+  <link rel="stylesheet" href="style.css?v=20260312c" />
+  <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <p class="section-title">방 참가</p>
+
+      <div class="row">
+        <button class="btn primary" id="loginBtn">Google로 로그인</button>
+      </div>
+
+      <div class="row" id="navBox" style="display:none;">
+        <button class="btn ghost compact" id="backLobbyBtn">로비로 돌아가기</button>
+        <button class="btn ghost compact" id="goGroupBtn" style="display:none;">내 그룹으로 가기</button>
+      </div>
+
+      <div class="profile" id="profileBox" style="display:none;">
+        <div class="avatar" id="avatarBox"></div>
+        <div style="min-width:0;">
+          <div class="name" id="userName">-</div>
+          <div class="mail" id="userMail">-</div>
+        </div>
+      </div>
+
+      <div id="roomListBox" class="panel-block" style="display:none;">
+        <div class="input-row">
+          <input id="roomCodeInput" class="field" placeholder="방 코드 입력" maxlength="8" style="text-transform:uppercase;" />
+          <button id="joinByCodeBtn" class="btn ghost compact">코드 입장</button>
+        </div>
+        <p class="section-title" style="margin-bottom:8px;">대기실 목록</p>
+        <ul class="list" id="roomList"></ul>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="enter-room.js?v=20260313a"></script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>운영 대시보드</title>
+  <link rel="stylesheet" href="style.css?v=20260312c" />
+  <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <p class="section-title">운영 대시보드</p>
+
+      <div class="row">
+        <button class="btn ghost compact" id="backProfileBtn">프로필로 돌아가기</button>
+        <button class="btn ghost compact" id="backLobbyBtn">로비로 돌아가기</button>
+        <button class="btn compact" id="runCleanupBtn">데이터 정리 실행</button>
+      </div>
+
+      <div class="list" style="margin-top:12px;">
+        <div class="item"><div class="item-left"><div class="item-name">총 사용자</div></div><div class="badge" id="statUsers">-</div></div>
+        <div class="item"><div class="item-left"><div class="item-name">대기 방</div></div><div class="badge" id="statWaiting">-</div></div>
+        <div class="item"><div class="item-left"><div class="item-name">진행 방</div></div><div class="badge" id="statActive">-</div></div>
+        <div class="item"><div class="item-left"><div class="item-name">오늘 인증 수</div></div><div class="badge" id="statCheckins">-</div></div>
+      </div>
+
+      <div class="panel-block">
+        <p class="section-title">대기실 샘플(최대 20개)</p>
+        <ul class="list" id="roomList"></ul>
+      </div>
+
+      <div class="panel-block">
+        <p class="section-title">최근 정리 결과</p>
+        <div class="pill" id="cleanupResult">아직 실행 전</div>
+      </div>
+
+      <p class="notice">지표는 화면 진입 시점 기준으로 집계됩니다.</p>
+    </div>
+  </div>
+
+  <script type="module" src="admin.js?v=20260312a"></script>
+</body>
+</html>

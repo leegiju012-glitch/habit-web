@@ -1,8 +1,16 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, setDoc, serverTimestamp, getDoc, collection, query, where, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  onAuthStateChanged,
+  signOut,
+  setPersistence,
+  browserLocalPersistence
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, doc, setDoc, serverTimestamp, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
-import { getMessaging, getToken } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
+import { getMessaging, getToken, isSupported as isMessagingSupported } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 
 document.addEventListener("DOMContentLoaded", () => {
   const firebaseConfig = {
@@ -19,19 +27,26 @@ document.addEventListener("DOMContentLoaded", () => {
   const db = getFirestore(app);
   const functions = getFunctions(app, "asia-northeast3");
   const provider = new GoogleAuthProvider();
-  const messaging = getMessaging(app);
+  setPersistence(auth, browserLocalPersistence).catch((err) => {
+    console.warn("auth persistence setup failed", err);
+  });
+  let messaging = null;
+  isMessagingSupported()
+    .then((supported) => {
+      if (supported) messaging = getMessaging(app);
+    })
+    .catch(() => {
+      messaging = null;
+    });
 
-  const goGroupBtn = document.getElementById("goGroupBtn");
+  const loginRow = document.getElementById("loginRow");
+  const goProfileBtn = document.getElementById("goProfileBtn");
   const loginBtn = document.getElementById("loginBtn");
   const logoutBtn = document.getElementById("logoutBtn");
-  const statusPill = document.getElementById("statusPill");
   const profileBox = document.getElementById("profileBox");
   const userName = document.getElementById("userName");
   const userMail = document.getElementById("userMail");
   const avatarBox = document.getElementById("avatarBox");
-  const nicknameBox = document.getElementById("nicknameBox");
-  const nicknameInput = document.getElementById("nicknameInput");
-  const saveNickBtn = document.getElementById("saveNickBtn");
 
   const roomCreateBox = document.getElementById("roomCreateBox");
   const roomTitleInput = document.getElementById("roomTitleInput");
@@ -40,14 +55,24 @@ document.addEventListener("DOMContentLoaded", () => {
   const roomPasswordInput = document.getElementById("roomPasswordInput");
   const createRoomBtn = document.getElementById("createRoomBtn");
   const myRoomPill = document.getElementById("myRoomPill");
-
-  const roomListBox = document.getElementById("roomListBox");
-  const roomList = document.getElementById("roomList");
+  const roomActionBox = document.getElementById("roomActionBox");
+  const enterRoomBtn = document.getElementById("enterRoomBtn");
+  const openCreateRoomBtn = document.getElementById("openCreateRoomBtn");
 
   let userDocUnsub = null;
-  let roomListUnsub = null;
-  let latestRooms = [];
   let currentUserGroupId = null;
+  let createFormVisible = false;
+
+  async function safeRequestNotificationPermission() {
+    try {
+      if (!("Notification" in window)) return;
+      if (Notification.permission === "default") {
+        await Notification.requestPermission();
+      }
+    } catch (err) {
+      console.warn("notification permission skipped", err);
+    }
+  }
 
   function extractFunctionErrorMessage(err, fallback) {
     if (err?.details && typeof err.details === "string") return err.details;
@@ -55,6 +80,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (err.message.startsWith("internal") || err.message === "INTERNAL") return fallback;
       return err.message;
     }
+    if (err?.code && typeof err.code === "string") return `${fallback} (${err.code})`;
     return fallback;
   }
 
@@ -64,157 +90,103 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function setLobbyEnabled(enabled) {
-    createRoomBtn.disabled = !enabled;
-    roomTitleInput.disabled = !enabled;
-    roomTopicInput.disabled = !enabled;
-    roomPrivacySelect.disabled = !enabled;
-    roomPasswordInput.disabled = !enabled;
+    if (createRoomBtn) createRoomBtn.disabled = !enabled;
+    if (roomTitleInput) roomTitleInput.disabled = !enabled;
+    if (roomTopicInput) roomTopicInput.disabled = !enabled;
+    if (roomPrivacySelect) roomPrivacySelect.disabled = !enabled;
+    if (roomPasswordInput) roomPasswordInput.disabled = !enabled;
+    if (enterRoomBtn) enterRoomBtn.disabled = !enabled;
+    if (openCreateRoomBtn) openCreateRoomBtn.disabled = !enabled;
   }
 
-  function renderRoomList(currentGroupId) {
-    if (!roomList) return;
-    roomList.innerHTML = "";
-
-    if (!latestRooms.length) {
-      const li = document.createElement("li");
-      li.className = "item";
-      li.innerHTML = '<div class="item-left"><div class="item-name">대기 중인 방이 없습니다.</div><div class="item-sub">새 방을 만들어 시작해보세요.</div></div>';
-      roomList.appendChild(li);
-      return;
+  function setCreateFormVisible(visible) {
+    createFormVisible = visible;
+    if (roomCreateBox) roomCreateBox.style.display = visible ? "block" : "none";
+    if (openCreateRoomBtn) {
+      openCreateRoomBtn.textContent = visible ? "방 만들기 닫기" : "방 만들기";
     }
+    updatePasswordFieldVisibility();
+  }
 
-    for (const room of latestRooms) {
-      const li = document.createElement("li");
-      li.className = "item";
-
-      const membersCount = Array.isArray(room.members) ? room.members.length : 0;
-      const topic = room.topic || "주제 미설정";
-      const title = room.title || "제목 없는 방";
-      const visibilityLabel = room.visibility === "private" ? "비공개" : "공개";
-      const isMine = currentGroupId && currentGroupId === room.id;
-
-      const left = document.createElement("div");
-      left.className = "item-left";
-      const nameEl = document.createElement("div");
-      nameEl.className = "item-name";
-      nameEl.textContent = title;
-      const topicEl = document.createElement("div");
-      topicEl.className = "item-sub";
-      topicEl.textContent = topic;
-      const metaEl = document.createElement("div");
-      metaEl.className = "item-sub";
-      metaEl.textContent = `${visibilityLabel} · ${membersCount}/5`;
-      left.appendChild(nameEl);
-      left.appendChild(topicEl);
-      left.appendChild(metaEl);
-
-      const joinBtn = document.createElement("button");
-      joinBtn.className = "btn ghost";
-      joinBtn.style.width = "auto";
-      joinBtn.style.padding = "8px 12px";
-      joinBtn.style.borderRadius = "10px";
-      joinBtn.textContent = isMine ? "참여 중" : "입장";
-      joinBtn.disabled = !!isMine || membersCount >= 5;
-
-      joinBtn.onclick = () => joinRoom(room);
-
-      li.appendChild(left);
-      li.appendChild(joinBtn);
-      roomList.appendChild(li);
-    }
+  function updatePasswordFieldVisibility() {
+    if (!roomPasswordInput || !roomPrivacySelect) return;
+    const isPrivate = roomPrivacySelect.value === "private";
+    roomPasswordInput.style.display = isPrivate ? "block" : "none";
+    roomPasswordInput.disabled = !isPrivate;
+    if (!isPrivate) roomPasswordInput.value = "";
   }
 
   function renderLobbyState(userData) {
     const inGroup = !!userData.currentGroupId;
-
-    goGroupBtn.style.display = inGroup ? "block" : "none";
-    roomCreateBox.style.display = "block";
-    roomListBox.style.display = "block";
+    if (roomActionBox) roomActionBox.style.display = "flex";
 
     if (inGroup) {
       setLobbyEnabled(false);
-      myRoomPill.style.display = "inline-flex";
-      myRoomPill.textContent = `참여 중인 방 ID: ${userData.currentGroupId}`;
+      if (roomActionBox) roomActionBox.style.display = "none";
+      setCreateFormVisible(false);
+      if (myRoomPill) {
+        myRoomPill.style.display = "inline-flex";
+        myRoomPill.textContent = `참여 중인 방 ID: ${userData.currentGroupId} (내 그룹 이동)`;
+        myRoomPill.style.cursor = "pointer";
+        myRoomPill.onclick = () => { location.href = "/group.html"; };
+      }
     } else {
       setLobbyEnabled(true);
-      myRoomPill.style.display = "none";
-      myRoomPill.textContent = "";
+      if (roomActionBox) roomActionBox.style.display = "flex";
+      setCreateFormVisible(createFormVisible);
+      if (myRoomPill) {
+        myRoomPill.style.display = "none";
+        myRoomPill.textContent = "";
+        myRoomPill.style.cursor = "default";
+        myRoomPill.onclick = null;
+      }
     }
-
-    renderRoomList(userData.currentGroupId || null);
   }
 
   async function ensureNickname(user) {
-    const nickname = nicknameInput.value.trim();
-    if (!isValidNickname(nickname)) {
-      alert("입장 전에 닉네임을 2~10자로 저장해 주세요.");
-      return null;
-    }
-
+    const userRef = doc(db, "users", user.uid);
+    const userSnap = await getDoc(userRef);
+    const currentNickname = (userSnap.exists() ? userSnap.data()?.nickname : "") || "";
+    const fallbackNickname = (user.displayName || "사용자").trim().slice(0, 10);
+    const nickname = isValidNickname(currentNickname) ? currentNickname : fallbackNickname;
+    if (!isValidNickname(nickname)) return null;
     await setDoc(doc(db, "users", user.uid), { nickname }, { merge: true });
     return nickname;
   }
 
-  async function joinRoom(room) {
-    const user = auth.currentUser;
-    if (!user) return;
-
-    try {
-      createRoomBtn.disabled = true;
-      const nickname = await ensureNickname(user);
-      if (!nickname) return;
-
-      let password = "";
-
-      if (room.visibility === "private") {
-        password = prompt("비공개방 비밀번호를 입력하세요.") || "";
-        if (!password) return;
+  if (loginBtn) {
+    loginBtn.onclick = async () => {
+      try {
+        await signInWithPopup(auth, provider);
+      } catch (err) {
+        console.error("login failed", err);
+        alert("로그인 팝업이 차단되었거나 실패했습니다. 주소창 브라우저에서 팝업 허용 후 다시 시도해 주세요.");
       }
-
-      const joinRoomFn = httpsCallable(functions, "joinRoom");
-      await joinRoomFn({ groupId: room.id, password });
-
-      alert("방에 입장했습니다.");
-    } catch (err) {
-      console.error("joinRoom failed", err);
-      alert(extractFunctionErrorMessage(err, "입장 처리 중 오류가 발생했습니다."));
-    } finally {
-      renderRoomList(currentUserGroupId);
-      createRoomBtn.disabled = false;
-    }
+    };
+  }
+  if (logoutBtn) logoutBtn.onclick = () => signOut(auth);
+  if (enterRoomBtn) {
+    enterRoomBtn.onclick = () => {
+      location.href = "/enter-room.html";
+    };
+  }
+  if (openCreateRoomBtn) {
+    openCreateRoomBtn.onclick = () => {
+      setCreateFormVisible(!createFormVisible);
+    };
+  }
+  if (roomPrivacySelect) {
+    roomPrivacySelect.onchange = updatePasswordFieldVisibility;
+  }
+  if (goProfileBtn) {
+    goProfileBtn.onclick = () => {
+      location.href = "/profile.html";
+    };
   }
 
-  loginBtn.onclick = () => signInWithPopup(auth, provider);
-  logoutBtn.onclick = () => signOut(auth);
-  goGroupBtn.onclick = () => {
-    location.href = "/group.html";
-  };
-
-  saveNickBtn.onclick = async () => {
+  if (createRoomBtn) createRoomBtn.onclick = async () => {
     const user = auth.currentUser;
-    if (!user) return;
-
-    const nickname = nicknameInput.value.trim();
-    if (!isValidNickname(nickname)) {
-      alert("닉네임은 2~10자로 입력해 주세요.");
-      return;
-    }
-
-    saveNickBtn.disabled = true;
-    try {
-      await setDoc(doc(db, "users", user.uid), { nickname }, { merge: true });
-      alert("닉네임이 저장되었습니다.");
-    } catch (err) {
-      console.error("saveNick failed", err);
-      alert("닉네임 저장 중 오류가 발생했습니다.");
-    } finally {
-      saveNickBtn.disabled = false;
-    }
-  };
-
-  createRoomBtn.onclick = async () => {
-    const user = auth.currentUser;
-    if (!user) return;
+    if (!user || !roomTitleInput || !roomTopicInput || !roomPrivacySelect || !roomPasswordInput) return;
 
     createRoomBtn.disabled = true;
     try {
@@ -252,15 +224,19 @@ document.addEventListener("DOMContentLoaded", () => {
       const createRoomFn = httpsCallable(functions, "createRoom");
       const result = await createRoomFn({ title, topic, visibility, password });
       const createdTitle = result?.data?.title || title;
+      const roomCode = result?.data?.roomCode || "-";
 
-      myRoomPill.style.display = "inline-flex";
-      myRoomPill.textContent = `내 방: ${createdTitle}`;
+      if (myRoomPill) {
+        myRoomPill.style.display = "inline-flex";
+        myRoomPill.textContent = `내 방: ${createdTitle} (코드 ${roomCode})`;
+      }
       alert("방이 생성되었습니다.");
 
       roomTitleInput.value = "";
       roomTopicInput.value = "";
       roomPasswordInput.value = "";
       roomPrivacySelect.value = "public";
+      updatePasswordFieldVisibility();
     } catch (err) {
       console.error("createRoom failed", err);
       alert(extractFunctionErrorMessage(err, "방 생성 중 오류가 발생했습니다."));
@@ -275,32 +251,24 @@ document.addEventListener("DOMContentLoaded", () => {
         userDocUnsub();
         userDocUnsub = null;
       }
-      if (roomListUnsub) {
-        roomListUnsub();
-        roomListUnsub = null;
-      }
 
-      loginBtn.style.display = "block";
-      logoutBtn.style.display = "none";
-      goGroupBtn.style.display = "none";
-      statusPill.textContent = "오프라인";
-      profileBox.style.display = "none";
-      nicknameBox.style.display = "none";
-      roomCreateBox.style.display = "none";
-      roomListBox.style.display = "none";
-      myRoomPill.style.display = "none";
-      latestRooms = [];
-      renderRoomList(null);
+      if (loginRow) loginRow.style.display = "flex";
+      if (loginBtn) loginBtn.style.display = "block";
+      if (logoutBtn) logoutBtn.style.display = "none";
+      if (goProfileBtn) goProfileBtn.style.display = "none";
+      if (profileBox) profileBox.style.display = "none";
+      if (roomCreateBox) roomCreateBox.style.display = "none";
+      createFormVisible = false;
+      if (roomActionBox) roomActionBox.style.display = "none";
+      if (myRoomPill) myRoomPill.style.display = "none";
       return;
     }
 
     const userRef = doc(db, "users", user.uid);
 
-    if (Notification.permission !== "granted") {
-      await Notification.requestPermission();
-    }
+    await safeRequestNotificationPermission();
 
-    if (Notification.permission === "granted") {
+    if (messaging && "Notification" in window && Notification.permission === "granted") {
       try {
         const token = await getToken(messaging, {
           vapidKey: "BBew8s0bi1q5yWspgXoTMvHjAoTsFA0BQ8YW3N2-sGvc7Qsr1Xj-AyYM5Kc5RRQLZukoSNwA2hEiex_MsdRVriY"
@@ -324,6 +292,8 @@ document.addEventListener("DOMContentLoaded", () => {
         photoURL: user.photoURL || "",
         currentGroupId: null,
         currentGroupInviteCode: null,
+        currentChallengeStreak: 0,
+        lastChallengeStreak: 0,
         createdAt: serverTimestamp()
       });
       userSnap = await getDoc(userRef);
@@ -331,17 +301,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const myData = userSnap.data();
 
-    loginBtn.style.display = "none";
-    logoutBtn.style.display = "block";
-    profileBox.style.display = "flex";
-    nicknameBox.style.display = "flex";
-    roomCreateBox.style.display = "block";
-    roomListBox.style.display = "block";
-    statusPill.textContent = "온라인";
+    if (loginRow) loginRow.style.display = "none";
+    if (loginBtn) loginBtn.style.display = "none";
+    if (logoutBtn) logoutBtn.style.display = "block";
+    if (goProfileBtn) goProfileBtn.style.display = "block";
+    if (profileBox) profileBox.style.display = "flex";
+    if (roomCreateBox) roomCreateBox.style.display = "none";
+    createFormVisible = false;
+    if (roomActionBox) roomActionBox.style.display = "flex";
 
-    userName.textContent = myData.nickname || user.displayName || "사용자";
-    userMail.textContent = user.email || "";
-    nicknameInput.value = myData.nickname || "";
+    if (userName) userName.textContent = myData.nickname || user.displayName || "사용자";
+    if (userMail) userMail.textContent = user.email || "";
 
     avatarBox.innerHTML = "";
     if (user.photoURL) {
@@ -355,27 +325,12 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!snap.exists()) return;
       const latest = snap.data();
       currentUserGroupId = latest.currentGroupId || null;
-      userName.textContent = latest.nickname || user.displayName || "사용자";
-      if (document.activeElement !== nicknameInput) {
-        nicknameInput.value = latest.nickname || "";
-      }
+      if (userName) userName.textContent = latest.nickname || user.displayName || "사용자";
       renderLobbyState(latest);
     });
 
-    if (roomListUnsub) roomListUnsub();
-    const waitingRoomsQuery = query(collection(db, "groups"), where("status", "==", "waiting"));
-    roomListUnsub = onSnapshot(waitingRoomsQuery, (snap) => {
-      latestRooms = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      latestRooms.sort((a, b) => {
-        const at = a.createdAt?.seconds || 0;
-        const bt = b.createdAt?.seconds || 0;
-        return bt - at;
-      });
-
-      renderRoomList(currentUserGroupId);
-    });
-
     currentUserGroupId = myData.currentGroupId || null;
+    updatePasswordFieldVisibility();
     renderLobbyState(myData);
   });
 

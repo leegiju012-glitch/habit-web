@@ -4,7 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>내 그룹</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=20260312a" />
+  <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+  <meta name="mobile-web-app-capable" content="yes" />
 </head>
 <body>
   <div id="photoModal" class="photo-modal" style="display:none;">
@@ -15,13 +17,15 @@
   <div class="container">
     <div class="topbar">
       <div class="brand">
-        <div class="logo"></div>
         <div>
           <div class="title">내 그룹</div>
           <div class="subtitle" id="groupSub">오늘 인증 현황</div>
         </div>
       </div>
-      <button class="btn ghost" id="backBtn" style="width:auto; padding:10px 12px; border-radius:12px;">로비</button>
+      <div style="display:flex; gap:8px;">
+        <button class="btn ghost compact" id="goProfileBtn">프로필</button>
+        <button class="btn ghost compact" id="backBtn">로비</button>
+      </div>
     </div>
 
     <div class="card">
@@ -36,17 +40,18 @@
       <div class="row">
         <button class="btn success" id="checkinBtn">오늘 인증하기</button>
         <button class="btn ghost" id="ownerActionBtn" style="display:none;">챌린지 시작</button>
+        <button class="btn danger" id="ownerDissolveBtn" style="display:none;">방 해산</button>
         <button id="leaveGroupBtn" class="danger-btn">그룹 나가기</button>      
       </div>
 
       <ul class="list" id="members"></ul>
 
       <p class="notice">
-        ⭕ 인증 완료 · ⏳ 아직 시간 남음 · ❌ 마감 후 미이행
+        ⭕ 승인 완료 · 🟡 검토중 · ❌ 반려/미인증
       </p>
     </div>
   </div>
 
-  <script type="module" src="group.js?v=20260311g"></script>
+  <script type="module" src="group.js?v=20260312k"></script>
 </body>
 </html>

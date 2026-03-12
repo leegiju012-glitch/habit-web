@@ -9,6 +9,10 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
+    function validNickname(n) {
+      return n is string && n.size() >= 2 && n.size() <= 10;
+    }
+
     // users/{uid}
     // - 본인은 자신의 프로필/닉네임/토큰/그룹 상태를 수정 가능
     // - 매칭 트랜잭션을 위해, queue에 있는 유저의 currentGroupId 설정은 로그인 사용자에게 허용
@@ -17,7 +21,32 @@ service cloud.firestore {
 
       allow create: if isOwner(uid);
 
-      allow update: if isOwner(uid)
+      allow update: if (
+          isOwner(uid)
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+            "name",
+            "nickname",
+            "email",
+            "photoURL",
+            "fcmToken",
+            "currentGroupId",
+            "currentGroupInviteCode",
+            "currentChallengeStreak",
+            "lastChallengeStreak"
+          ])
+          && (
+            !request.resource.data.diff(resource.data).changedKeys().hasAny(["nickname"])
+            || validNickname(request.resource.data.nickname)
+          )
+          && (
+            !request.resource.data.diff(resource.data).changedKeys().hasAny(["currentChallengeStreak"])
+            || (request.resource.data.currentChallengeStreak is int && request.resource.data.currentChallengeStreak >= 0)
+          )
+          && (
+            !request.resource.data.diff(resource.data).changedKeys().hasAny(["lastChallengeStreak"])
+            || (request.resource.data.lastChallengeStreak is int && request.resource.data.lastChallengeStreak >= 0)
+          )
+        )
         || (
           signedIn()
           && exists(/databases/$(database)/documents/queue/$(uid))
@@ -62,11 +91,11 @@ service cloud.firestore {
           && request.resource.data.members == resource.data.members
         )
         ||
-        // 방장: active -> closed 해산
+        // 방장: waiting/active -> closed 해산
         (
           request.auth.uid == resource.data.ownerUid
           && request.resource.data.diff(resource.data).changedKeys().hasOnly(["status", "closedAt"])
-          && resource.data.status == "active"
+          && (resource.data.status == "waiting" || resource.data.status == "active")
           && request.resource.data.status == "closed"
           && request.resource.data.members == resource.data.members
         )
@@ -99,7 +128,11 @@ service cloud.firestore {
     // - 읽기는 로그인 사용자 허용 (그룹 화면 렌더링용)
     match /checkins/{checkinId} {
       allow read: if signedIn();
-      allow create, update: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow create, update: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.groupId is string
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.currentGroupId == request.resource.data.groupId;
       allow delete: if signedIn() && resource.data.uid == request.auth.uid;
     }
   }

@@ -1,447 +1,340 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, setDoc, serverTimestamp, getDoc, getDocs, collection, query, where, limit, runTransaction, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import { getMessaging, getToken } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  onAuthStateChanged,
+  signOut,
+  setPersistence,
+  browserLocalPersistence
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, doc, setDoc, serverTimestamp, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
+import { getMessaging, getToken, isSupported as isMessagingSupported } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 
 document.addEventListener("DOMContentLoaded", () => {
+  const firebaseConfig = {
+    apiKey: "AIzaSyBKGufJEWjipBfI77A51M0R7iD5kHpcj3o",
+    authDomain: "a-compulsory-challenge.firebaseapp.com",
+    projectId: "a-compulsory-challenge",
+    storageBucket: "a-compulsory-challenge.firebasestorage.app",
+    messagingSenderId: "637088399262",
+    appId: "1:637088399262:web:c1128d0b95fe7f7337e08f"
+  };
 
-const firebaseConfig = {
-  apiKey: "AIzaSyBKGufJEWjipBfI77A51M0R7iD5kHpcj3o",
-  authDomain: "a-compulsory-challenge.firebaseapp.com",
-  projectId: "a-compulsory-challenge",
-  storageBucket: "a-compulsory-challenge.firebasestorage.app",
-  messagingSenderId: "637088399262",
-  appId: "1:637088399262:web:c1128d0b95fe7f7337e08f"
-};
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const provider = new GoogleAuthProvider();
-const messaging = getMessaging(app);
-
-const joinQueueBtn = document.getElementById("joinQueueBtn");
-const goGroupBtn = document.getElementById("goGroupBtn");
-const loginBtn = document.getElementById("loginBtn");
-const logoutBtn = document.getElementById("logoutBtn");
-const statusPill = document.getElementById("statusPill");
-const profileBox = document.getElementById("profileBox");
-const userName = document.getElementById("userName");
-const userMail = document.getElementById("userMail");
-const avatarBox = document.getElementById("avatarBox");
-const nicknameBox = document.getElementById("nicknameBox");
-const nicknameInput = document.getElementById("nicknameInput");
-const saveNickBtn = document.getElementById("saveNickBtn");
-const privateGroupBox = document.getElementById("privateGroupBox");
-const createPrivateGroupBtn = document.getElementById("createPrivateGroupBtn");
-const inviteCodeInput = document.getElementById("inviteCodeInput");
-const joinPrivateGroupBtn = document.getElementById("joinPrivateGroupBtn");
-const myInviteCodePill = document.getElementById("myInviteCodePill");
-let userDocUnsub = null;
-
-function renderLobbyActions(currentGroupId, inviteCode) {
-  privateGroupBox.style.display = "block";
-
-  if (currentGroupId) {
-    goGroupBtn.style.display = "block";
-    joinQueueBtn.style.display = "none";
-    createPrivateGroupBtn.disabled = true;
-    joinPrivateGroupBtn.disabled = true;
-    inviteCodeInput.disabled = true;
-    if (inviteCode) {
-      myInviteCodePill.style.display = "inline-flex";
-      myInviteCodePill.textContent = "내 그룹 코드: " + inviteCode;
-    } else {
-      myInviteCodePill.style.display = "none";
-      myInviteCodePill.textContent = "";
-    }
-    return;
-  }
-
-  goGroupBtn.style.display = "none";
-  joinQueueBtn.style.display = "block";
-  createPrivateGroupBtn.disabled = false;
-  joinPrivateGroupBtn.disabled = false;
-  inviteCodeInput.disabled = false;
-  myInviteCodePill.style.display = "none";
-  myInviteCodePill.textContent = "";
-}
-
-function isValidNickname(value) {
-  const nickname = (value || "").trim();
-  return nickname.length >= 2 && nickname.length <= 10;
-}
-
-function normalizeInviteCode(value) {
-  return (value || "").trim().toUpperCase();
-}
-
-function generateInviteCode(length = 6) {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let out = "";
-  for (let i = 0; i < length; i++) {
-    out += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return out;
-}
-
-async function ensureNickname(user) {
-  const nickname = nicknameInput.value.trim();
-  if (!isValidNickname(nickname)) {
-    alert("매칭 전에 닉네임을 2~10자로 저장해 주세요.");
-    return null;
-  }
-  await setDoc(doc(db, "users", user.uid), { nickname }, { merge: true });
-  return nickname;
-}
-
-loginBtn.onclick = () => signInWithPopup(auth, provider);
-logoutBtn.onclick = () => signOut(auth);
-
-onAuthStateChanged(auth, async (user) => {
-
-  if (!user) {
-    if (userDocUnsub) {
-      userDocUnsub();
-      userDocUnsub = null;
-    }
-
-    loginBtn.style.display = "block";
-    logoutBtn.style.display = "none";
-    joinQueueBtn.style.display = "none";
-    goGroupBtn.style.display = "none";
-    statusPill.textContent = "오프라인";
-    profileBox.style.display = "none";
-    nicknameBox.style.display = "none";
-    privateGroupBox.style.display = "none";
-    myInviteCodePill.style.display = "none";
-    return;
-  }
-
-  const userRef = doc(db, "users", user.uid);
-
-  if (Notification.permission !== "granted") {
-    await Notification.requestPermission();
-  }
-
-  if (Notification.permission === "granted") {
-    const token = await getToken(messaging, {
-      vapidKey: "BBew8s0bi1q5yWspgXoTMvHjAoTsFA0BQ8YW3N2-sGvc7Qsr1Xj-AyYM5Kc5RRQLZukoSNwA2hEiex_MsdRVriY"
-    });
-
-    if (token) {
-      await setDoc(userRef, {
-        fcmToken: token
-      }, { merge: true });
-    }
-  }
-
-  let userSnap = await getDoc(userRef);
-  
-  if (!userSnap.exists()) {
-    await setDoc(userRef, {
-      uid: user.uid,
-      name: user.displayName || "",
-      nickname: user.displayName || "",
-      email: user.email || "",
-      photoURL: user.photoURL || "",
-      currentGroupId: null,
-      currentGroupInviteCode: null,
-      createdAt: serverTimestamp()
-    });
-    userSnap = await getDoc(userRef);
-  }
-
-  const myData = userSnap.data();
-
-  loginBtn.style.display = "none";
-  logoutBtn.style.display = "block";
-  profileBox.style.display = "flex";
-  nicknameBox.style.display = "flex";
-  statusPill.textContent = "온라인";
-
-  userName.textContent = myData.nickname || user.displayName || "사용자";
-  userMail.textContent = user.email || "";
-  nicknameInput.value = myData.nickname || "";
-
-  avatarBox.innerHTML = "";
-  if (user.photoURL) {
-    const img = document.createElement("img");
-    img.src = user.photoURL;
-    avatarBox.appendChild(img);
-  }
-
-  renderLobbyActions(myData.currentGroupId, myData.currentGroupInviteCode);
-
-  if (userDocUnsub) {
-    userDocUnsub();
-  }
-
-  userDocUnsub = onSnapshot(userRef, (snap) => {
-    if (!snap.exists()) return;
-    const latest = snap.data();
-    userName.textContent = latest.nickname || user.displayName || "사용자";
-    if (document.activeElement !== nicknameInput) {
-      nicknameInput.value = latest.nickname || "";
-    }
-    renderLobbyActions(latest.currentGroupId, latest.currentGroupInviteCode);
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+  const functions = getFunctions(app, "asia-northeast3");
+  const provider = new GoogleAuthProvider();
+  setPersistence(auth, browserLocalPersistence).catch((err) => {
+    console.warn("auth persistence setup failed", err);
   });
-});
+  let messaging = null;
+  isMessagingSupported()
+    .then((supported) => {
+      if (supported) messaging = getMessaging(app);
+    })
+    .catch(() => {
+      messaging = null;
+    });
 
-saveNickBtn.onclick = async () => {
-  const user = auth.currentUser;
-  if (!user) return;
+  const loginRow = document.getElementById("loginRow");
+  const goProfileBtn = document.getElementById("goProfileBtn");
+  const loginBtn = document.getElementById("loginBtn");
+  const logoutBtn = document.getElementById("logoutBtn");
+  const profileBox = document.getElementById("profileBox");
+  const userName = document.getElementById("userName");
+  const userMail = document.getElementById("userMail");
+  const avatarBox = document.getElementById("avatarBox");
 
-  const nickname = nicknameInput.value.trim();
-  if (!isValidNickname(nickname)) {
-    alert("닉네임은 2~10자로 입력해 주세요.");
-    return;
+  const roomCreateBox = document.getElementById("roomCreateBox");
+  const roomTitleInput = document.getElementById("roomTitleInput");
+  const roomTopicInput = document.getElementById("roomTopicInput");
+  const roomPrivacySelect = document.getElementById("roomPrivacySelect");
+  const roomPasswordInput = document.getElementById("roomPasswordInput");
+  const createRoomBtn = document.getElementById("createRoomBtn");
+  const myRoomPill = document.getElementById("myRoomPill");
+  const roomActionBox = document.getElementById("roomActionBox");
+  const enterRoomBtn = document.getElementById("enterRoomBtn");
+  const openCreateRoomBtn = document.getElementById("openCreateRoomBtn");
+
+  let userDocUnsub = null;
+  let currentUserGroupId = null;
+  let createFormVisible = false;
+
+  async function safeRequestNotificationPermission() {
+    try {
+      if (!("Notification" in window)) return;
+      if (Notification.permission === "default") {
+        await Notification.requestPermission();
+      }
+    } catch (err) {
+      console.warn("notification permission skipped", err);
+    }
   }
 
-  saveNickBtn.disabled = true;
-  try {
+  function extractFunctionErrorMessage(err, fallback) {
+    if (err?.details && typeof err.details === "string") return err.details;
+    if (err?.message && typeof err.message === "string") {
+      if (err.message.startsWith("internal") || err.message === "INTERNAL") return fallback;
+      return err.message;
+    }
+    if (err?.code && typeof err.code === "string") return `${fallback} (${err.code})`;
+    return fallback;
+  }
+
+  function isValidNickname(value) {
+    const nickname = (value || "").trim();
+    return nickname.length >= 2 && nickname.length <= 10;
+  }
+
+  function setLobbyEnabled(enabled) {
+    if (createRoomBtn) createRoomBtn.disabled = !enabled;
+    if (roomTitleInput) roomTitleInput.disabled = !enabled;
+    if (roomTopicInput) roomTopicInput.disabled = !enabled;
+    if (roomPrivacySelect) roomPrivacySelect.disabled = !enabled;
+    if (roomPasswordInput) roomPasswordInput.disabled = !enabled;
+    if (enterRoomBtn) enterRoomBtn.disabled = !enabled;
+    if (openCreateRoomBtn) openCreateRoomBtn.disabled = !enabled;
+  }
+
+  function setCreateFormVisible(visible) {
+    createFormVisible = visible;
+    if (roomCreateBox) roomCreateBox.style.display = visible ? "block" : "none";
+    if (openCreateRoomBtn) {
+      openCreateRoomBtn.textContent = visible ? "방 만들기 닫기" : "방 만들기";
+    }
+    updatePasswordFieldVisibility();
+  }
+
+  function updatePasswordFieldVisibility() {
+    if (!roomPasswordInput || !roomPrivacySelect) return;
+    const isPrivate = roomPrivacySelect.value === "private";
+    roomPasswordInput.style.display = isPrivate ? "block" : "none";
+    roomPasswordInput.disabled = !isPrivate;
+    if (!isPrivate) roomPasswordInput.value = "";
+  }
+
+  function renderLobbyState(userData) {
+    const inGroup = !!userData.currentGroupId;
+    if (roomActionBox) roomActionBox.style.display = "flex";
+
+    if (inGroup) {
+      setLobbyEnabled(false);
+      if (roomActionBox) roomActionBox.style.display = "none";
+      setCreateFormVisible(false);
+      if (myRoomPill) {
+        myRoomPill.style.display = "inline-flex";
+        myRoomPill.textContent = `참여 중인 방 ID: ${userData.currentGroupId} (내 그룹 이동)`;
+        myRoomPill.style.cursor = "pointer";
+        myRoomPill.onclick = () => { location.href = "/group.html"; };
+      }
+    } else {
+      setLobbyEnabled(true);
+      if (roomActionBox) roomActionBox.style.display = "flex";
+      setCreateFormVisible(createFormVisible);
+      if (myRoomPill) {
+        myRoomPill.style.display = "none";
+        myRoomPill.textContent = "";
+        myRoomPill.style.cursor = "default";
+        myRoomPill.onclick = null;
+      }
+    }
+  }
+
+  async function ensureNickname(user) {
+    const userRef = doc(db, "users", user.uid);
+    const userSnap = await getDoc(userRef);
+    const currentNickname = (userSnap.exists() ? userSnap.data()?.nickname : "") || "";
+    const fallbackNickname = (user.displayName || "사용자").trim().slice(0, 10);
+    const nickname = isValidNickname(currentNickname) ? currentNickname : fallbackNickname;
+    if (!isValidNickname(nickname)) return null;
     await setDoc(doc(db, "users", user.uid), { nickname }, { merge: true });
-    alert("닉네임이 저장되었습니다.");
-  } catch (err) {
-    console.error("saveNick failed", err);
-    alert("닉네임 저장 중 오류가 발생했습니다.");
-  } finally {
-    saveNickBtn.disabled = false;
+    return nickname;
   }
-};
 
-joinQueueBtn.onclick = async () => {
-  const user = auth.currentUser;
-  if (!user) return;
+  if (loginBtn) {
+    loginBtn.onclick = async () => {
+      try {
+        await signInWithPopup(auth, provider);
+      } catch (err) {
+        console.error("login failed", err);
+        alert("로그인 팝업이 차단되었거나 실패했습니다. 주소창 브라우저에서 팝업 허용 후 다시 시도해 주세요.");
+      }
+    };
+  }
+  if (logoutBtn) logoutBtn.onclick = () => signOut(auth);
+  if (enterRoomBtn) {
+    enterRoomBtn.onclick = () => {
+      location.href = "/enter-room.html";
+    };
+  }
+  if (openCreateRoomBtn) {
+    openCreateRoomBtn.onclick = () => {
+      setCreateFormVisible(!createFormVisible);
+    };
+  }
+  if (roomPrivacySelect) {
+    roomPrivacySelect.onchange = updatePasswordFieldVisibility;
+  }
+  if (goProfileBtn) {
+    goProfileBtn.onclick = () => {
+      location.href = "/profile.html";
+    };
+  }
 
-  try {
-    joinQueueBtn.disabled = true;
-    const nickname = await ensureNickname(user);
-    if (!nickname) return;
+  if (createRoomBtn) createRoomBtn.onclick = async () => {
+    const user = auth.currentUser;
+    if (!user || !roomTitleInput || !roomTopicInput || !roomPrivacySelect || !roomPasswordInput) return;
 
-    await setDoc(doc(db, "queue", user.uid), {
-      uid: user.uid,
-      createdAt: serverTimestamp()
-    }, { merge: true });
+    createRoomBtn.disabled = true;
+    try {
+      const nickname = await ensureNickname(user);
+      if (!nickname) return;
 
-    alert("매칭 대기열에 등록되었습니다.");
-    const created = await tryMatchGroup();
+      const mySnap = await getDoc(doc(db, "users", user.uid));
+      if (mySnap.exists() && mySnap.data().currentGroupId) {
+        alert("이미 참여 중인 방이 있습니다.");
+        return;
+      }
 
-    const latestUserSnap = await getDoc(doc(db, "users", user.uid));
-    const latestGroupId = latestUserSnap.exists() ? latestUserSnap.data().currentGroupId : null;
-    const latestInviteCode = latestUserSnap.exists() ? latestUserSnap.data().currentGroupInviteCode : null;
-    renderLobbyActions(latestGroupId, latestInviteCode);
+      const title = (roomTitleInput.value || "").trim();
+      const topic = (roomTopicInput.value || "").trim();
+      const visibility = roomPrivacySelect.value === "private" ? "private" : "public";
+      const password = (roomPasswordInput.value || "").trim();
 
-    if (!created && !latestGroupId) {
-      alert("아직 그룹 매칭이 완료되지 않았습니다. 잠시 후 다시 확인해 주세요.");
+      if (!title) {
+        alert("방 이름을 입력해 주세요.");
+        return;
+      }
+
+      if (!topic) {
+        alert("주제를 입력해 주세요.");
+        return;
+      }
+
+      if (visibility === "private") {
+        if (password.length < 4) {
+          alert("비공개방 비밀번호는 4자 이상 입력해 주세요.");
+          return;
+        }
+      }
+
+      const createRoomFn = httpsCallable(functions, "createRoom");
+      const result = await createRoomFn({ title, topic, visibility, password });
+      const createdTitle = result?.data?.title || title;
+      const roomCode = result?.data?.roomCode || "-";
+
+      if (myRoomPill) {
+        myRoomPill.style.display = "inline-flex";
+        myRoomPill.textContent = `내 방: ${createdTitle} (코드 ${roomCode})`;
+      }
+      alert("방이 생성되었습니다.");
+
+      roomTitleInput.value = "";
+      roomTopicInput.value = "";
+      roomPasswordInput.value = "";
+      roomPrivacySelect.value = "public";
+      updatePasswordFieldVisibility();
+    } catch (err) {
+      console.error("createRoom failed", err);
+      alert(extractFunctionErrorMessage(err, "방 생성 중 오류가 발생했습니다."));
+    } finally {
+      createRoomBtn.disabled = false;
     }
-  } catch (err) {
-    console.error("joinQueue failed", err);
-    alert("매칭 처리 중 오류가 발생했습니다. 다시 시도해 주세요.");
-  } finally {
-    joinQueueBtn.disabled = false;
-  }
-};
+  };
 
-createPrivateGroupBtn.onclick = async () => {
-  const user = auth.currentUser;
-  if (!user) return;
+  onAuthStateChanged(auth, async (user) => {
+    if (!user) {
+      if (userDocUnsub) {
+        userDocUnsub();
+        userDocUnsub = null;
+      }
 
-  createPrivateGroupBtn.disabled = true;
-  joinPrivateGroupBtn.disabled = true;
-  try {
-    const nickname = await ensureNickname(user);
-    if (!nickname) return;
-
-    const mySnap = await getDoc(doc(db, "users", user.uid));
-    if (mySnap.exists() && mySnap.data().currentGroupId) {
-      alert("이미 참여 중인 그룹이 있습니다.");
+      if (loginRow) loginRow.style.display = "flex";
+      if (loginBtn) loginBtn.style.display = "block";
+      if (logoutBtn) logoutBtn.style.display = "none";
+      if (goProfileBtn) goProfileBtn.style.display = "none";
+      if (profileBox) profileBox.style.display = "none";
+      if (roomCreateBox) roomCreateBox.style.display = "none";
+      createFormVisible = false;
+      if (roomActionBox) roomActionBox.style.display = "none";
+      if (myRoomPill) myRoomPill.style.display = "none";
       return;
     }
 
-    let inviteCode = null;
-    for (let i = 0; i < 10; i++) {
-      const candidate = generateInviteCode(6);
-      const dupSnap = await getDocs(query(collection(db, "groups"), where("inviteCode", "==", candidate), limit(1)));
-      if (dupSnap.empty) {
-        inviteCode = candidate;
-        break;
+    const userRef = doc(db, "users", user.uid);
+
+    await safeRequestNotificationPermission();
+
+    if (messaging && "Notification" in window && Notification.permission === "granted") {
+      try {
+        const token = await getToken(messaging, {
+          vapidKey: "BBew8s0bi1q5yWspgXoTMvHjAoTsFA0BQ8YW3N2-sGvc7Qsr1Xj-AyYM5Kc5RRQLZukoSNwA2hEiex_MsdRVriY"
+        });
+
+        if (token) {
+          await setDoc(userRef, { fcmToken: token }, { merge: true });
+        }
+      } catch (err) {
+        console.error("fcm token failed", err);
       }
     }
 
-    if (!inviteCode) {
-      alert("그룹 코드 생성에 실패했습니다. 다시 시도해 주세요.");
-      return;
+    let userSnap = await getDoc(userRef);
+    if (!userSnap.exists()) {
+      await setDoc(userRef, {
+        uid: user.uid,
+        name: user.displayName || "",
+        nickname: user.displayName || "",
+        email: user.email || "",
+        photoURL: user.photoURL || "",
+        currentGroupId: null,
+        currentGroupInviteCode: null,
+        currentChallengeStreak: 0,
+        lastChallengeStreak: 0,
+        createdAt: serverTimestamp()
+      });
+      userSnap = await getDoc(userRef);
     }
 
-    const groupRef = doc(collection(db, "groups"));
-    await setDoc(groupRef, {
-      members: [user.uid],
-      ownerUid: user.uid,
-      mode: "private",
-      status: "waiting",
-      inviteCode,
-      startedAt: null,
-      closedAt: null,
-      createdAt: serverTimestamp()
+    const myData = userSnap.data();
+
+    if (loginRow) loginRow.style.display = "none";
+    if (loginBtn) loginBtn.style.display = "none";
+    if (logoutBtn) logoutBtn.style.display = "block";
+    if (goProfileBtn) goProfileBtn.style.display = "block";
+    if (profileBox) profileBox.style.display = "flex";
+    if (roomCreateBox) roomCreateBox.style.display = "none";
+    createFormVisible = false;
+    if (roomActionBox) roomActionBox.style.display = "flex";
+
+    if (userName) userName.textContent = myData.nickname || user.displayName || "사용자";
+    if (userMail) userMail.textContent = user.email || "";
+
+    avatarBox.innerHTML = "";
+    if (user.photoURL) {
+      const img = document.createElement("img");
+      img.src = user.photoURL;
+      avatarBox.appendChild(img);
+    }
+
+    if (userDocUnsub) userDocUnsub();
+    userDocUnsub = onSnapshot(userRef, (snap) => {
+      if (!snap.exists()) return;
+      const latest = snap.data();
+      currentUserGroupId = latest.currentGroupId || null;
+      if (userName) userName.textContent = latest.nickname || user.displayName || "사용자";
+      renderLobbyState(latest);
     });
 
-    await setDoc(doc(db, "users", user.uid), {
-      currentGroupId: groupRef.id,
-      currentGroupInviteCode: inviteCode
-    }, { merge: true });
-
-    myInviteCodePill.style.display = "inline-flex";
-    myInviteCodePill.textContent = "내 그룹 코드: " + inviteCode;
-    alert("개인 그룹이 생성되었습니다. 코드: " + inviteCode);
-  } catch (err) {
-    console.error("createPrivateGroup failed", err);
-    alert("개인 그룹 생성 중 오류가 발생했습니다.");
-  } finally {
-    createPrivateGroupBtn.disabled = false;
-    joinPrivateGroupBtn.disabled = false;
-  }
-};
-
-joinPrivateGroupBtn.onclick = async () => {
-  const user = auth.currentUser;
-  if (!user) return;
-
-  createPrivateGroupBtn.disabled = true;
-  joinPrivateGroupBtn.disabled = true;
-  try {
-    const nickname = await ensureNickname(user);
-    if (!nickname) return;
-
-    const code = normalizeInviteCode(inviteCodeInput.value);
-    if (!code || code.length < 4) {
-      alert("올바른 그룹 코드를 입력해 주세요.");
-      return;
-    }
-
-    const gSnap = await getDocs(query(collection(db, "groups"), where("inviteCode", "==", code), limit(1)));
-    if (gSnap.empty) {
-      alert("해당 그룹 코드를 찾을 수 없습니다.");
-      return;
-    }
-
-    const groupRef = gSnap.docs[0].ref;
-
-    await runTransaction(db, async (tx) => {
-      const userRef = doc(db, "users", user.uid);
-      const userSnap = await tx.get(userRef);
-      if (userSnap.exists() && userSnap.data().currentGroupId) {
-        throw new Error("ALREADY_IN_GROUP");
-      }
-
-      const groupSnap = await tx.get(groupRef);
-      if (!groupSnap.exists()) {
-        throw new Error("GROUP_NOT_FOUND");
-      }
-
-      const groupData = groupSnap.data();
-      const members = Array.isArray(groupData.members) ? groupData.members : [];
-      const status = groupData.status || "waiting";
-
-      if (status !== "waiting") {
-        throw new Error("GROUP_NOT_JOINABLE");
-      }
-
-      if (!members.includes(user.uid) && members.length >= 5) {
-        throw new Error("GROUP_FULL");
-      }
-
-      const nextMembers = members.includes(user.uid) ? members : [...members, user.uid];
-      tx.update(groupRef, { members: nextMembers });
-      tx.set(userRef, { currentGroupId: groupRef.id, currentGroupInviteCode: code }, { merge: true });
-    });
-
-    alert("개인 그룹에 입장했습니다.");
-  } catch (err) {
-    if (err && err.message === "ALREADY_IN_GROUP") {
-      alert("이미 참여 중인 그룹이 있습니다.");
-    } else if (err && err.message === "GROUP_FULL") {
-      alert("해당 그룹은 정원이 가득 찼습니다.");
-    } else if (err && err.message === "GROUP_NOT_FOUND") {
-      alert("그룹을 찾을 수 없습니다.");
-    } else if (err && err.message === "GROUP_NOT_JOINABLE") {
-      alert("이미 시작되었거나 종료된 방입니다.");
-    } else {
-      console.error("joinPrivateGroup failed", err);
-      alert("코드 입장 중 오류가 발생했습니다.");
-    }
-  } finally {
-    createPrivateGroupBtn.disabled = false;
-    joinPrivateGroupBtn.disabled = false;
-  }
-};
-
-async function tryMatchGroup() {
-  let created = false;
-  const qRef = query(collection(db, "queue"), limit(10));
-  const qSnap = await getDocs(qRef);
-
-  if (qSnap.size < 2) {
-    return false;
-  }
-
-  const candidateUids = qSnap.docs.map((d) => d.id);
-
-  await runTransaction(db, async (tx) => {
-    const waiting = [];
-
-    for (const uid of candidateUids) {
-      const queueRef = doc(db, "queue", uid);
-      const queueSnap = await tx.get(queueRef);
-      if (!queueSnap.exists()) continue;
-
-      const userRef = doc(db, "users", uid);
-      const userSnap = await tx.get(userRef);
-      const alreadyGrouped = userSnap.exists() && userSnap.data().currentGroupId;
-
-      if (!alreadyGrouped) {
-        waiting.push(uid);
-      }
-
-      if (waiting.length >= 5) break;
-    }
-
-    if (waiting.length < 2) return;
-
-    const groupSize = waiting.length >= 5 ? 5 : waiting.length;
-    const members = waiting.slice(0, groupSize);
-
-    const groupRef = doc(collection(db, "groups"));
-    tx.set(groupRef, {
-      members,
-      ownerUid: members[0],
-      mode: "random",
-      status: "active",
-      inviteCode: null,
-      startedAt: serverTimestamp(),
-      closedAt: null,
-      createdAt: serverTimestamp()
-    });
-
-    for (const uid of members) {
-      tx.set(doc(db, "users", uid), { currentGroupId: groupRef.id, currentGroupInviteCode: null }, { merge: true });
-      tx.delete(doc(db, "queue", uid));
-    }
-
-    created = true;
+    currentUserGroupId = myData.currentGroupId || null;
+    updatePasswordFieldVisibility();
+    renderLobbyState(myData);
   });
 
-  if (created) {
-    alert("그룹이 생성되었습니다.");
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/service-worker.js");
   }
-
-  return created;
-}
-
-goGroupBtn.onclick = () => location.href = "/group.html";
-
-if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("/service-worker.js");
-}
-
 });
