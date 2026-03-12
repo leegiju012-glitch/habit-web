@@ -84,11 +84,11 @@ onAuthStateChanged(auth, async (user) => {
   const members = Array.isArray(groupData.members) ? groupData.members : [];
   const normalizedMode = groupData.mode || (groupData.inviteCode ? "private" : "random");
   const normalizedOwnerUid = groupData.ownerUid || (members.length > 0 ? members[0] : null);
-  const normalizedStatus = groupData.status || (normalizedMode === "private" ? "waiting" : "active");
-  const isPrivateGroup = normalizedMode === "private";
+  const normalizedStatus = groupData.status || (normalizedMode === "random" ? "active" : "waiting");
+  const isManagedRoom = normalizedMode !== "random";
   const isOwner = normalizedOwnerUid === user.uid;
   const groupStatus = normalizedStatus;
-  const challengeLocked = isPrivateGroup && groupStatus !== "active";
+  const challengeLocked = isManagedRoom && groupStatus !== "active";
 
   const memberElements = [];
 
@@ -155,7 +155,7 @@ onAuthStateChanged(auth, async (user) => {
 
   if (statusEl) {
     let statusText = "그룹 ID : " + groupId;
-    if (isPrivateGroup) {
+    if (isManagedRoom) {
       if (groupStatus === "waiting") {
         statusText += " · 대기실 (" + members.length + "/5)";
       } else if (groupStatus === "active") {
@@ -172,7 +172,7 @@ onAuthStateChanged(auth, async (user) => {
     ownerActionBtn.onclick = null;
     ownerActionBtn.classList.remove("danger");
 
-    if (isPrivateGroup && isOwner && groupStatus === "waiting") {
+    if (isManagedRoom && isOwner && groupStatus === "waiting") {
       ownerActionBtn.style.display = "block";
       ownerActionBtn.textContent = members.length >= 2 ? "챌린지 시작" : "챌린지 시작 (2명 이상)";
       ownerActionBtn.disabled = members.length < 2;
@@ -189,9 +189,9 @@ onAuthStateChanged(auth, async (user) => {
             const latestMembers = Array.isArray(d.members) ? d.members : [];
             const mode = d.mode || (d.inviteCode ? "private" : "random");
             const ownerUid = d.ownerUid || (latestMembers.length > 0 ? latestMembers[0] : null);
-            const status = d.status || (mode === "private" ? "waiting" : "active");
+            const status = d.status || (mode === "random" ? "active" : "waiting");
             const canStart =
-              mode === "private" &&
+              mode !== "random" &&
               ownerUid === user.uid &&
               status === "waiting" &&
               latestMembers.length >= 2 &&
@@ -216,7 +216,7 @@ onAuthStateChanged(auth, async (user) => {
           }
         }
       };
-    } else if (isPrivateGroup && isOwner && groupStatus === "active") {
+    } else if (isManagedRoom && isOwner && groupStatus === "active") {
       ownerActionBtn.style.display = "block";
       ownerActionBtn.textContent = "방 해산";
       ownerActionBtn.classList.add("danger");
@@ -234,9 +234,9 @@ onAuthStateChanged(auth, async (user) => {
             const latestMembers = Array.isArray(d.members) ? d.members : [];
             const mode = d.mode || (d.inviteCode ? "private" : "random");
             const ownerUid = d.ownerUid || (latestMembers.length > 0 ? latestMembers[0] : null);
-            const status = d.status || (mode === "private" ? "waiting" : "active");
+            const status = d.status || (mode === "random" ? "active" : "waiting");
             const canDissolve =
-              mode === "private" &&
+              mode !== "random" &&
               ownerUid === user.uid &&
               status === "active";
 
@@ -383,7 +383,7 @@ onAuthStateChanged(auth, async (user) => {
   }
 
   if(leaveGroupBtn){
-    leaveGroupBtn.textContent = isOwner && isPrivateGroup ? "방 나가기(방장)" : "그룹 나가기";
+    leaveGroupBtn.textContent = isOwner && isManagedRoom ? "방 나가기(방장)" : "그룹 나가기";
     leaveGroupBtn.onclick=async()=>{
       if(!confirm("정말로 그룹에서 나가시겠습니까?")) return;
 

@@ -1,6 +1,6 @@
 {
-  "name": "7일 챌린지",
-  "short_name": "챌린지",
+  "name": "Challenge",
+  "short_name": "Challenge",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0b1220",

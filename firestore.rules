@@ -47,17 +47,51 @@ service cloud.firestore {
     }
 
     // groups/{groupId}
-    // - 매칭 시 생성 필요
-    // - 그룹 상세 조회는 로그인 사용자에게 허용
+    // - 생성/입장은 Cloud Functions(Admin SDK)에서 처리
+    // - 클라이언트는 읽기 + 제한된 상태변경/자기 자신 나가기만 허용
     match /groups/{groupId} {
       allow read: if signedIn();
-      allow create: if signedIn();
-      allow update: if signedIn();
+      allow create: if false;
+      allow update: if signedIn() && (
+        // 방장: waiting -> active 시작
+        (
+          request.auth.uid == resource.data.ownerUid
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(["status", "startedAt"])
+          && resource.data.status == "waiting"
+          && request.resource.data.status == "active"
+          && request.resource.data.members == resource.data.members
+        )
+        ||
+        // 방장: active -> closed 해산
+        (
+          request.auth.uid == resource.data.ownerUid
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(["status", "closedAt"])
+          && resource.data.status == "active"
+          && request.resource.data.status == "closed"
+          && request.resource.data.members == resource.data.members
+        )
+        ||
+        // 멤버: 자기 자신 나가기(멤버 추가 금지)
+        (
+          request.resource.data.diff(resource.data).changedKeys().hasOnly(["members"])
+          && resource.data.members is list
+          && request.resource.data.members is list
+          && resource.data.members.hasAny([request.auth.uid])
+          && !request.resource.data.members.hasAny([request.auth.uid])
+          && request.resource.data.members.size() == resource.data.members.size() - 1
+          && resource.data.members.hasAll(request.resource.data.members)
+        )
+      );
       allow delete: if signedIn()
-        && resource.data.mode == "private"
+        && resource.data.mode != "random"
         && resource.data.ownerUid == request.auth.uid
         && resource.data.members is list
         && resource.data.members.size() < 2;
+    }
+
+    // 비밀번호 해시/솔트는 서버 전용 컬렉션
+    match /groupSecrets/{groupId} {
+      allow read, write: if false;
     }
 
     // checkins/{groupId_uid_date}

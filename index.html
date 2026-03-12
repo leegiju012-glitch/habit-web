@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>7일 챌린지</title>
+  <title>Challenge</title>
 
   <link rel="stylesheet" href="style.css" />
 
@@ -19,8 +19,8 @@
       <div class="brand">
         <div class="logo"></div>
         <div>
-          <div class="title">7일 챌린지</div>
-          <div class="subtitle">3~5명 자동 그룹 · 사진 인증</div>
+          <div class="title">Challenge</div>
+          <div class="subtitle">주제별 방 선택 · 사진 인증</div>
         </div>
       </div>
       <span class="pill" id="statusPill">오프라인</span>
@@ -29,35 +29,42 @@
     <div class="card">
       <p class="section-title">로비</p>
       <h1 class="big" id="headline">오늘도 인증합시다.</h1>
-      <p class="desc" id="subline">로그인 후 대기열에 들어가면 자동으로 그룹이 만들어져요.</p>
+      <p class="desc" id="subline">대기 중인 방을 골라 입장하거나 새 방을 만들어 시작하세요.</p>
 
       <div class="row">
         <button class="btn primary" id="loginBtn">Google로 로그인</button>
         <button class="btn ghost" id="logoutBtn" style="display:none;">로그아웃</button>
 
-        <button class="btn success" id="joinQueueBtn" style="display:none;">랜덤 매칭 시작</button>
         <button class="btn ghost" id="goGroupBtn" style="display:none;">내 그룹으로 가기</button>
       </div>
 
-      <div id="privateGroupBox" style="margin-top:12px; display:none;">
-        <p class="section-title" style="margin-bottom:8px;">개인 그룹 매칭</p>
+      <div id="roomCreateBox" style="margin-top:12px; display:none;">
+        <p class="section-title" style="margin-bottom:8px;">방 만들기</p>
         <div style="display:flex; gap:8px; margin-bottom:8px;">
-          <button id="createPrivateGroupBtn" class="btn ghost" style="width:auto; padding:10px 14px; border-radius:12px;">
-            그룹 코드 생성
-          </button>
-          <div class="pill" id="myInviteCodePill" style="display:none;"></div>
+          <input id="roomTitleInput" placeholder="방 이름" maxlength="30" style="flex:1; padding:10px 12px; border-radius:12px; border:1px solid #3a3f55; background:#0f172a; color:white;" />
+          <input id="roomTopicInput" placeholder="주제" maxlength="40" style="flex:1; padding:10px 12px; border-radius:12px; border:1px solid #3a3f55; background:#0f172a; color:white;" />
         </div>
-        <div style="display:flex; gap:8px;">
+        <div style="display:flex; gap:8px; margin-bottom:8px;">
+          <select id="roomPrivacySelect" style="padding:10px 12px; border-radius:12px; border:1px solid #3a3f55; background:#0f172a; color:white;">
+            <option value="public">공개방</option>
+            <option value="private">비공개방(비밀번호)</option>
+          </select>
           <input
-            id="inviteCodeInput"
-            placeholder="그룹 코드 입력"
-            maxlength="8"
-            style="flex:1; padding:10px 12px; border-radius:12px; border:1px solid #3a3f55; background:#0f172a; color:white; text-transform:uppercase;"
+            id="roomPasswordInput"
+            placeholder="비밀번호 (비공개방)"
+            maxlength="20"
+            style="flex:1; padding:10px 12px; border-radius:12px; border:1px solid #3a3f55; background:#0f172a; color:white;"
           />
-          <button id="joinPrivateGroupBtn" class="btn ghost" style="width:auto; padding:10px 14px; border-radius:12px;">
-            코드로 입장
+          <button id="createRoomBtn" class="btn ghost" style="width:auto; padding:10px 14px; border-radius:12px;">
+            방 생성
           </button>
         </div>
+        <div class="pill" id="myRoomPill" style="display:none;"></div>
+      </div>
+
+      <div id="roomListBox" style="margin-top:12px; display:none;">
+        <p class="section-title" style="margin-bottom:8px;">대기실 목록</p>
+        <ul class="list" id="roomList"></ul>
       </div>
 
       <div class="profile" id="profileBox" style="display:none;">
@@ -86,7 +93,7 @@
     </div>
   </div>
 
-  <script type="module" src="app.js?v=20260311e"></script>
+  <script type="module" src="app.js?v=20260312c"></script>
 
   </body>
 </html>
