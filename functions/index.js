@@ -343,6 +343,9 @@ export const dissolveRoom = onCall(fnOptions, async (request) => {
       if (!members.includes(voterUid)) {
         throw new Error("NOT_MEMBER");
       }
+      if (members.length === 2 && voterUid !== ownerUid) {
+        throw new Error("NOT_OWNER");
+      }
 
       const memberSnapshots = [];
       for (const memberUid of members) {

@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, query, where, getCountFromServer, getDocs, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, collection, query, where, getCountFromServer, getDocs, limit, orderBy } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -27,6 +27,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const statActive = document.getElementById("statActive");
   const statCheckins = document.getElementById("statCheckins");
   const roomList = document.getElementById("roomList");
+  const errorList = document.getElementById("errorList");
   const runCleanupBtn = document.getElementById("runCleanupBtn");
   const cleanupResult = document.getElementById("cleanupResult");
 
@@ -34,7 +35,11 @@ document.addEventListener("DOMContentLoaded", () => {
   backLobbyBtn.onclick = () => { location.href = "/index.html"; };
 
   function todayStr() {
-    return new Date().toISOString().slice(0, 10);
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
   }
 
   onAuthStateChanged(auth, async (user) => {
@@ -87,6 +92,30 @@ document.addEventListener("DOMContentLoaded", () => {
             `<div class="item-sub">코드 ${room.roomCode || "-"} · ${members}/5 · ${room.visibility === "private" ? "비공개" : "공개"}</div>` +
             `</div>`;
           roomList.appendChild(li);
+        });
+      }
+
+      const errorSnap = await getDocs(query(collection(db, "clientErrors"), orderBy("createdAt", "desc"), limit(30)));
+      errorList.innerHTML = "";
+      if (errorSnap.empty) {
+        const li = document.createElement("li");
+        li.className = "item";
+        li.innerHTML = '<div class="item-left"><div class="item-name">오류 없음</div><div class="item-sub">최근 클라이언트 오류 로그가 없습니다.</div></div>';
+        errorList.appendChild(li);
+      } else {
+        errorSnap.docs.forEach((d) => {
+          const e = d.data();
+          const ts = e.createdAt?.toDate ? e.createdAt.toDate() : null;
+          const when = ts ? ts.toLocaleString("ko-KR") : "-";
+          const li = document.createElement("li");
+          li.className = "item";
+          li.innerHTML =
+            `<div class="item-left">` +
+            `<div class="item-name">${e.type || "unknown_error"}</div>` +
+            `<div class="item-sub">${e.page || "-"} · ${e.code || "no-code"} · ${when}</div>` +
+            `<div class="item-sub">${e.message || "-"}</div>` +
+            `</div>`;
+          errorList.appendChild(li);
         });
       }
 

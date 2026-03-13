@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, serverTimestamp, updateDoc, deleteDoc, runTransaction, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, doc, getDoc, setDoc, serverTimestamp, updateDoc, deleteDoc, runTransaction, onSnapshot, collection, addDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
@@ -42,10 +42,15 @@ document.addEventListener("DOMContentLoaded", () => {
   let groupUnsub = null;
   let userUnsub = null;
   const memberWatchers = new Map();
+  const memberUserCache = new Map();
+  const memberCheckinCache = new Map();
+  let latestUserData = null;
+  let latestGroupData = null;
 
   let renderTimer = null;
   let rendering = false;
   let renderQueued = false;
+  let todayKey = "";
 
   function extractFunctionErrorMessage(err, fallback) {
     if (err?.details && typeof err.details === "string") return err.details;
@@ -53,8 +58,42 @@ document.addEventListener("DOMContentLoaded", () => {
     return fallback;
   }
 
+  async function logClientError(type, err, extra = {}) {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    try {
+      await addDoc(collection(db, "clientErrors"), {
+        uid,
+        type,
+        code: String(err?.code || ""),
+        message: String(err?.message || "unknown"),
+        page: "group",
+        extra,
+        createdAt: serverTimestamp()
+      });
+    } catch (_) {
+      // no-op
+    }
+  }
+
   function todayStr() {
-    return new Date().toISOString().slice(0, 10);
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+
+  function startDateWatcher() {
+    todayKey = todayStr();
+    setInterval(() => {
+      const next = todayStr();
+      if (next === todayKey) return;
+      todayKey = next;
+      // Date key changed at local 00:00: rebind today's checkin listeners.
+      cleanupMemberWatchers();
+      scheduleRender();
+    }, 1000);
   }
 
   function cleanupMemberWatchers() {
@@ -62,6 +101,8 @@ document.addEventListener("DOMContentLoaded", () => {
       for (const unsub of unsubs) unsub();
     }
     memberWatchers.clear();
+    memberUserCache.clear();
+    memberCheckinCache.clear();
   }
 
   function setGroupWatcher(groupId) {
@@ -70,7 +111,10 @@ document.addEventListener("DOMContentLoaded", () => {
       groupUnsub = null;
     }
     cleanupMemberWatchers();
-    groupUnsub = onSnapshot(doc(db, "groups", groupId), () => scheduleRender());
+    groupUnsub = onSnapshot(doc(db, "groups", groupId), (snap) => {
+      latestGroupData = snap.exists() ? snap.data() : null;
+      scheduleRender();
+    });
   }
 
   function syncMemberWatchers(groupId, members) {
@@ -79,8 +123,14 @@ document.addEventListener("DOMContentLoaded", () => {
     for (const uid of wanted) {
       if (memberWatchers.has(uid)) continue;
       const checkinDocId = `${groupId}_${uid}_${todayStr()}`;
-      const unsubUser = onSnapshot(doc(db, "users", uid), () => scheduleRender());
-      const unsubCheckin = onSnapshot(doc(db, "checkins", checkinDocId), () => scheduleRender());
+      const unsubUser = onSnapshot(doc(db, "users", uid), (snap) => {
+        memberUserCache.set(uid, snap.exists() ? snap.data() : null);
+        scheduleRender();
+      });
+      const unsubCheckin = onSnapshot(doc(db, "checkins", checkinDocId), (snap) => {
+        memberCheckinCache.set(uid, snap.exists() ? snap.data() : null);
+        scheduleRender();
+      });
       memberWatchers.set(uid, [unsubUser, unsubCheckin]);
     }
 
@@ -88,6 +138,8 @@ document.addEventListener("DOMContentLoaded", () => {
       if (wanted.has(uid)) continue;
       for (const unsub of unsubs) unsub();
       memberWatchers.delete(uid);
+      memberUserCache.delete(uid);
+      memberCheckinCache.delete(uid);
     }
   }
 
@@ -114,49 +166,67 @@ document.addEventListener("DOMContentLoaded", () => {
 
     try {
       const userRef = doc(db, "users", currentUser.uid);
-      let userSnap = await getDoc(userRef);
-      if (!userSnap.exists()) {
-        await setDoc(userRef, {
-          uid: currentUser.uid,
-          name: currentUser.displayName || "",
-          email: currentUser.email || "",
-          nickname: currentUser.displayName || "사용자",
-          currentChallengeStreak: 0,
-          lastChallengeStreak: 0,
-          currentGroupId: null,
-          currentGroupInviteCode: null,
-          createdAt: serverTimestamp()
-        });
-        userSnap = await getDoc(userRef);
+      let userData = latestUserData;
+      if (!userData) {
+        const userSnap = await getDoc(userRef);
+        if (!userSnap.exists()) {
+          await setDoc(userRef, {
+            uid: currentUser.uid,
+            name: currentUser.displayName || "",
+            email: currentUser.email || "",
+            nickname: currentUser.displayName || "사용자",
+            currentChallengeStreak: 0,
+            lastChallengeStreak: 0,
+            currentGroupId: null,
+            currentGroupInviteCode: null,
+            createdAt: serverTimestamp()
+          });
+          latestUserData = {
+            uid: currentUser.uid,
+            name: currentUser.displayName || "",
+            email: currentUser.email || "",
+            nickname: currentUser.displayName || "사용자",
+            currentChallengeStreak: 0,
+            lastChallengeStreak: 0,
+            currentGroupId: null,
+            currentGroupInviteCode: null
+          };
+        } else {
+          latestUserData = userSnap.data();
+        }
+        userData = latestUserData;
       }
 
-      const myData = userSnap.data();
-      if (!myData.currentGroupId) {
+      if (!userData.currentGroupId) {
         statusEl.textContent = "현재 참여 중인 그룹이 없습니다.";
         location.href = "/";
         return;
       }
 
-      if (myData.currentGroupId !== currentGroupId) {
-        currentGroupId = myData.currentGroupId;
+      if (userData.currentGroupId !== currentGroupId) {
+        currentGroupId = userData.currentGroupId;
         setGroupWatcher(currentGroupId);
       }
 
       const groupRef = doc(db, "groups", currentGroupId);
-      const groupSnap = await getDoc(groupRef);
-      if (!groupSnap.exists()) {
+      let groupData = latestGroupData;
+      if (!groupData) {
+        const groupSnap = await getDoc(groupRef);
+        groupData = groupSnap.exists() ? groupSnap.data() : null;
+        latestGroupData = groupData;
+      }
+
+      if (!groupData) {
         statusEl.textContent = "그룹 정보를 찾을 수 없습니다.";
-        await updateDoc(userRef, {
+        await setDoc(userRef, {
           currentGroupId: null,
           currentGroupInviteCode: null,
-          lastChallengeStreak: myData.currentChallengeStreak || 0,
+          lastChallengeStreak: userData.currentChallengeStreak || 0,
           currentChallengeStreak: 0
         });
         location.href = "/";
         return;
       }
-
-      const groupData = groupSnap.data();
       const members = Array.isArray(groupData.members) ? groupData.members : [];
       const dissolveVotes = Array.isArray(groupData.dissolveVotes) ? groupData.dissolveVotes : [];
       const normalizedMode = groupData.mode || (groupData.inviteCode ? "private" : "random");
@@ -177,30 +247,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
       membersEl.innerHTML = "";
       const today = todayStr();
-      const memberInfos = await Promise.all(
-        members.map(async (uid) => {
-          const [memberSnap, checkinSnap] = await Promise.all([
-            getDoc(doc(db, "users", uid)),
-            getDoc(doc(db, "checkins", `${currentGroupId}_${uid}_${today}`))
-          ]);
-          return { uid, memberSnap, checkinSnap };
-        })
-      );
 
       const memberElements = [];
 
-      for (const { uid, memberSnap, checkinSnap } of memberInfos) {
-        const m = memberSnap.exists() ? memberSnap.data() : null;
+      for (const uid of members) {
+        const m = memberUserCache.get(uid) || null;
+        const checkin = memberCheckinCache.get(uid) || null;
         const nickname = m?.nickname || m?.name || "사용자";
         const streak = m?.currentChallengeStreak || 0;
         const isMe = uid === currentUser.uid;
 
         let imageURL = null;
         let checkinStatus = null;
-        if (checkinSnap.exists()) {
-          const c = checkinSnap.data();
-          imageURL = c.imageURL;
-          checkinStatus = c.status || "approved";
+        if (checkin) {
+          imageURL = checkin.imageURL;
+          checkinStatus = checkin.status || "approved";
         }
 
         let markClass = "wait";
@@ -210,15 +271,15 @@ document.addEventListener("DOMContentLoaded", () => {
         const deadline = new Date();
         deadline.setHours(23, 59, 59, 999);
 
-        if (checkinSnap.exists() && checkinStatus === "approved") {
+        if (checkin && checkinStatus === "approved") {
           markClass = "ok";
           markText = "⭕ 인증 완료";
-        } else if (checkinSnap.exists() && checkinStatus === "pending") {
-          const approvals = Array.isArray(checkinSnap.data()?.approvals) ? checkinSnap.data().approvals.length : 0;
-          const rejections = Array.isArray(checkinSnap.data()?.rejections) ? checkinSnap.data().rejections.length : 0;
+        } else if (checkin && checkinStatus === "pending") {
+          const approvals = Array.isArray(checkin?.approvals) ? checkin.approvals.length : 0;
+          const rejections = Array.isArray(checkin?.rejections) ? checkin.rejections.length : 0;
           markClass = "wait";
           markText = `🟡 검토중 (${approvals}/${reviewRequired}, 반려 ${rejections}/${reviewRequired})`;
-        } else if (checkinSnap.exists() && checkinStatus === "rejected") {
+        } else if (checkin && checkinStatus === "rejected") {
           markClass = "no";
           markText = "❌ 반려";
         } else if (now > deadline) {
@@ -244,7 +305,7 @@ document.addEventListener("DOMContentLoaded", () => {
           };
         }
 
-        if (checkinSnap.exists() && checkinStatus !== "approved") {
+        if (checkin && checkinStatus !== "approved") {
           const actions = document.createElement("div");
           actions.style.display = "flex";
           actions.style.gap = "6px";
@@ -255,6 +316,8 @@ document.addEventListener("DOMContentLoaded", () => {
           approveBtn.textContent = "승인";
           approveBtn.onclick = async (e) => {
             e.stopPropagation();
+            approveBtn.disabled = true;
+            rejectBtn.disabled = true;
             try {
               const approveFn = httpsCallable(functions, "approveCheckin");
               const res = await approveFn({ groupId: currentGroupId, targetUid: uid, date: today });
@@ -263,7 +326,11 @@ document.addEventListener("DOMContentLoaded", () => {
               }
             } catch (err) {
               console.error("approveCheckin failed", err);
+              await logClientError("approveCheckin_failed", err, { groupId: currentGroupId, targetUid: uid, date: today });
               alert(extractFunctionErrorMessage(err, "승인 처리 중 오류가 발생했습니다."));
+            } finally {
+              approveBtn.disabled = false;
+              rejectBtn.disabled = false;
             }
           };
 
@@ -272,6 +339,8 @@ document.addEventListener("DOMContentLoaded", () => {
           rejectBtn.textContent = "반려";
           rejectBtn.onclick = async (e) => {
             e.stopPropagation();
+            approveBtn.disabled = true;
+            rejectBtn.disabled = true;
             try {
               const rejectFn = httpsCallable(functions, "rejectCheckin");
               const res = await rejectFn({ groupId: currentGroupId, targetUid: uid, date: today });
@@ -280,7 +349,11 @@ document.addEventListener("DOMContentLoaded", () => {
               }
             } catch (err) {
               console.error("rejectCheckin failed", err);
+              await logClientError("rejectCheckin_failed", err, { groupId: currentGroupId, targetUid: uid, date: today });
               alert(extractFunctionErrorMessage(err, "반려 처리 중 오류가 발생했습니다."));
+            } finally {
+              approveBtn.disabled = false;
+              rejectBtn.disabled = false;
             }
           };
 
@@ -297,7 +370,11 @@ document.addEventListener("DOMContentLoaded", () => {
         .sort((a, b) => a.priority - b.priority)
         .forEach((m) => membersEl.appendChild(m.element));
 
+      const groupTitle = (groupData.title || "").trim();
       let statusText = "그룹 ID : " + currentGroupId;
+      if (groupTitle) {
+        statusText += ` · 이름: ${groupTitle}`;
+      }
       if (isManagedRoom) {
         if (groupStatus === "waiting") {
           statusText += " · 대기실 (" + members.length + "/5)";
@@ -367,7 +444,11 @@ document.addEventListener("DOMContentLoaded", () => {
         ownerDissolveBtn.style.display = "none";
         ownerDissolveBtn.onclick = null;
 
-        if (isManagedRoom && (groupStatus === "waiting" || groupStatus === "active")) {
+        const canShowDissolve = isManagedRoom
+          && (groupStatus === "waiting" || groupStatus === "active")
+          && (!isPairRoom || isOwner);
+
+        if (canShowDissolve) {
           ownerDissolveBtn.style.display = "block";
           ownerDissolveBtn.textContent = isPairRoom
             ? "방 해산"
@@ -391,6 +472,7 @@ document.addEventListener("DOMContentLoaded", () => {
               }
             } catch (err) {
               console.error("dissolveRoom failed", err);
+              await logClientError("dissolveRoom_failed", err, { groupId: currentGroupId });
               const msg = typeof err?.details === "string"
                 ? err.details
                 : "방 해산 중 오류가 발생했습니다.";
@@ -404,9 +486,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const date = todayStr();
         const todayCheckinRef = doc(db, "checkins", `${currentGroupId}_${currentUser.uid}_${date}`);
         const storageRef = ref(storage, `checkins/${currentGroupId}/${currentUser.uid}_${date}.jpg`);
-        const myTodaySnap = await getDoc(todayCheckinRef);
-        const hasMyTodayCheckin = myTodaySnap.exists();
-        const myTodayData = hasMyTodayCheckin ? myTodaySnap.data() : null;
+        const myTodayData = memberCheckinCache.get(currentUser.uid) || null;
+        const hasMyTodayCheckin = !!myTodayData;
         const myTodayStatus = hasMyTodayCheckin ? (myTodayData.status || "approved") : null;
         const fileBox = fileInput ? fileInput.closest(".file") : null;
 
@@ -427,25 +508,49 @@ document.addEventListener("DOMContentLoaded", () => {
             : (myTodayStatus === "rejected" ? "반려됨 · 사진 변경/삭제" : "검토중 · 사진 변경/삭제");
           checkinBtn.onclick = async () => {
             const willChange = confirm("확인을 누르면 사진 변경, 취소를 누르면 삭제 선택으로 이동합니다.");
+            checkinBtn.disabled = true;
+            checkinBtn.textContent = "처리중...";
 
-            if (willChange) {
-              if (!fileInput || !fileInput.files[0]) {
-                alert("변경할 사진을 먼저 선택해 주세요.");
+            try {
+              if (willChange) {
+                if (!fileInput || !fileInput.files[0]) {
+                  alert("변경할 사진을 먼저 선택해 주세요.");
+                  return;
+                }
+
+                const file = fileInput.files[0];
+                await uploadBytes(storageRef, file);
+                const imageURL = await getDownloadURL(storageRef);
+
+                await updateDoc(todayCheckinRef, {
+                  imageURL,
+                  updatedAt: serverTimestamp(),
+                  status: "pending",
+                  reviewedBy: null,
+                  reviewedAt: null,
+                  streakCounted: false
+                });
+
+                if (myTodayData?.streakCounted) {
+                  const latestUserSnap = await getDoc(userRef);
+                  const currentStreak = latestUserSnap.exists() ? (latestUserSnap.data().currentChallengeStreak || 0) : 0;
+                  await updateDoc(userRef, { currentChallengeStreak: Math.max(currentStreak - 1, 0) });
+                }
+
+                alert("오늘 인증 사진이 재제출되었습니다. 방장 승인 후 반영됩니다.");
                 return;
               }
 
-              const file = fileInput.files[0];
-              await uploadBytes(storageRef, file);
-              const imageURL = await getDownloadURL(storageRef);
+              const willDelete = confirm("오늘 인증을 취소(삭제)하시겠습니까?");
+              if (!willDelete) return;
 
-              await updateDoc(todayCheckinRef, {
-                imageURL,
-                updatedAt: serverTimestamp(),
-                status: "pending",
-                reviewedBy: null,
-                reviewedAt: null,
-                streakCounted: false
-              });
+              try {
+                await deleteObject(storageRef);
+              } catch (_) {
+                // no-op
+              }
+
+              await deleteDoc(todayCheckinRef);
 
               if (myTodayData?.streakCounted) {
                 const latestUserSnap = await getDoc(userRef);
@@ -453,28 +558,15 @@ document.addEventListener("DOMContentLoaded", () => {
                 await updateDoc(userRef, { currentChallengeStreak: Math.max(currentStreak - 1, 0) });
               }
 
-              alert("오늘 인증 사진이 재제출되었습니다. 방장 승인 후 반영됩니다.");
-              return;
+              alert("오늘 인증이 취소되었습니다.");
+            } catch (err) {
+              console.error("checkin change/delete failed", err);
+              await logClientError("checkin_change_delete_failed", err, { groupId: currentGroupId, date });
+              alert("인증 처리 중 오류가 발생했습니다.");
+            } finally {
+              checkinBtn.disabled = false;
+              scheduleRender();
             }
-
-            const willDelete = confirm("오늘 인증을 취소(삭제)하시겠습니까?");
-            if (!willDelete) return;
-
-            try {
-              await deleteObject(storageRef);
-            } catch (_) {
-              // no-op
-            }
-
-            await deleteDoc(todayCheckinRef);
-
-            if (myTodayData?.streakCounted) {
-              const latestUserSnap = await getDoc(userRef);
-              const currentStreak = latestUserSnap.exists() ? (latestUserSnap.data().currentChallengeStreak || 0) : 0;
-              await updateDoc(userRef, { currentChallengeStreak: Math.max(currentStreak - 1, 0) });
-            }
-
-            alert("오늘 인증이 취소되었습니다.");
           };
         } else if (!challengeLocked) {
           checkinBtn.textContent = "오늘 인증 제출";
@@ -485,29 +577,39 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
             const file = fileInput.files[0];
-            const todayCheckinSnap = await getDoc(todayCheckinRef);
-            if (todayCheckinSnap.exists()) {
+            if (hasMyTodayCheckin) {
               alert("오늘은 이미 인증이 완료되었습니다.");
               return;
             }
 
-            await uploadBytes(storageRef, file);
-            const imageURL = await getDownloadURL(storageRef);
+            checkinBtn.disabled = true;
+            checkinBtn.textContent = "업로드 중...";
+            try {
+              await uploadBytes(storageRef, file);
+              const imageURL = await getDownloadURL(storageRef);
 
-            await setDoc(todayCheckinRef, {
-              groupId: currentGroupId,
-              uid: currentUser.uid,
-              date,
-              imageURL,
-              createdAt: serverTimestamp(),
-              status: "pending",
-              reviewedBy: null,
-              reviewedAt: null,
-              streakCounted: false,
-              approvals: [],
-              rejections: []
-            });
-            alert("오늘 인증이 제출되었습니다. 방장 승인 후 연속일이 반영됩니다.");
+              await setDoc(todayCheckinRef, {
+                groupId: currentGroupId,
+                uid: currentUser.uid,
+                date,
+                imageURL,
+                createdAt: serverTimestamp(),
+                status: "pending",
+                reviewedBy: null,
+                reviewedAt: null,
+                streakCounted: false,
+                approvals: [],
+                rejections: []
+              });
+              alert("오늘 인증이 제출되었습니다. 방장 승인 후 연속일이 반영됩니다.");
+            } catch (err) {
+              console.error("checkin submit failed", err);
+              await logClientError("checkin_submit_failed", err, { groupId: currentGroupId, date });
+              alert("인증 업로드 중 오류가 발생했습니다.");
+            } finally {
+              checkinBtn.disabled = false;
+              scheduleRender();
+            }
           };
         }
       }
@@ -524,6 +626,7 @@ document.addEventListener("DOMContentLoaded", () => {
             alert(dissolved ? "마지막 멤버가 나가 방이 자동으로 삭제되었습니다." : "그룹에서 나가셨습니다.");
           } catch (err) {
             console.error("leaveGroup failed", err);
+            await logClientError("leaveGroup_failed", err, { groupId: currentGroupId });
             alert("그룹 나가기 중 오류가 발생했습니다.");
             return;
           }
@@ -572,6 +675,7 @@ document.addEventListener("DOMContentLoaded", () => {
       statusEl.textContent = "현재 참여 중인 그룹이 없습니다.";
       return;
     }
+    latestUserData = myData;
 
     currentGroupId = myData.currentGroupId;
 
@@ -579,6 +683,7 @@ document.addEventListener("DOMContentLoaded", () => {
     userUnsub = onSnapshot(userRef, (snap) => {
       if (!snap.exists()) return;
       const latest = snap.data();
+      latestUserData = latest;
       if (!latest.currentGroupId) {
         location.href = "/";
         return;
@@ -593,4 +698,6 @@ document.addEventListener("DOMContentLoaded", () => {
     setGroupWatcher(currentGroupId);
     scheduleRender();
   });
+
+  startDateWatcher();
 });

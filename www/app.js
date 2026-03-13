@@ -8,7 +8,7 @@ import {
   setPersistence,
   browserLocalPersistence
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, setDoc, serverTimestamp, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, doc, setDoc, serverTimestamp, getDoc, onSnapshot, collection, addDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 import { getMessaging, getToken, isSupported as isMessagingSupported } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 
@@ -62,6 +62,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let userDocUnsub = null;
   let currentUserGroupId = null;
   let createFormVisible = false;
+  const groupTitleCache = new Map();
 
   async function safeRequestNotificationPermission() {
     try {
@@ -82,6 +83,24 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (err?.code && typeof err.code === "string") return `${fallback} (${err.code})`;
     return fallback;
+  }
+
+  async function logClientError(type, err, extra = {}) {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    try {
+      await addDoc(collection(db, "clientErrors"), {
+        uid,
+        type,
+        code: String(err?.code || ""),
+        message: String(err?.message || "unknown"),
+        page: "lobby",
+        extra,
+        createdAt: serverTimestamp()
+      });
+    } catch (_) {
+      // no-op
+    }
   }
 
   function isValidNickname(value) {
@@ -126,7 +145,10 @@ document.addEventListener("DOMContentLoaded", () => {
       setCreateFormVisible(false);
       if (myRoomPill) {
         myRoomPill.style.display = "inline-flex";
-        myRoomPill.textContent = `참여 중인 방 ID: ${userData.currentGroupId} (내 그룹 이동)`;
+        const cachedTitle = groupTitleCache.get(userData.currentGroupId) || "";
+        myRoomPill.textContent = cachedTitle
+          ? `참여 중인 방: ${cachedTitle} · ID ${userData.currentGroupId} (내 그룹 이동)`
+          : `참여 중인 방 ID: ${userData.currentGroupId} (내 그룹 이동)`;
         myRoomPill.style.cursor = "pointer";
         myRoomPill.onclick = () => { location.href = "/group.html"; };
       }
@@ -140,6 +162,22 @@ document.addEventListener("DOMContentLoaded", () => {
         myRoomPill.style.cursor = "default";
         myRoomPill.onclick = null;
       }
+    }
+  }
+
+  async function refreshGroupTitle(groupId) {
+    if (!groupId) return;
+    try {
+      const groupSnap = await getDoc(doc(db, "groups", groupId));
+      const title = groupSnap.exists() ? ((groupSnap.data()?.title || "").trim()) : "";
+      groupTitleCache.set(groupId, title);
+      if (myRoomPill && myRoomPill.style.display !== "none") {
+        myRoomPill.textContent = title
+          ? `참여 중인 방: ${title} · ID ${groupId} (내 그룹 이동)`
+          : `참여 중인 방 ID: ${groupId} (내 그룹 이동)`;
+      }
+    } catch (err) {
+      console.warn("refreshGroupTitle failed", err);
     }
   }
 
@@ -239,6 +277,7 @@ document.addEventListener("DOMContentLoaded", () => {
       updatePasswordFieldVisibility();
     } catch (err) {
       console.error("createRoom failed", err);
+      await logClientError("createRoom_failed", err, { visibility: roomPrivacySelect.value || "public" });
       alert(extractFunctionErrorMessage(err, "방 생성 중 오류가 발생했습니다."));
     } finally {
       createRoomBtn.disabled = false;
@@ -327,11 +366,17 @@ document.addEventListener("DOMContentLoaded", () => {
       currentUserGroupId = latest.currentGroupId || null;
       if (userName) userName.textContent = latest.nickname || user.displayName || "사용자";
       renderLobbyState(latest);
+      if (latest.currentGroupId) {
+        refreshGroupTitle(latest.currentGroupId);
+      }
     });
 
     currentUserGroupId = myData.currentGroupId || null;
     updatePasswordFieldVisibility();
     renderLobbyState(myData);
+    if (myData.currentGroupId) {
+      refreshGroupTitle(myData.currentGroupId);
+    }
   });
 
   if ("serviceWorker" in navigator) {

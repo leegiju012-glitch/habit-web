@@ -7,7 +7,7 @@ import {
   setPersistence,
   browserLocalPersistence
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, setDoc, serverTimestamp, getDoc, collection, query, where, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, doc, setDoc, serverTimestamp, getDoc, collection, query, where, onSnapshot, addDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -62,6 +62,24 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (err?.code && typeof err.code === "string") return `${fallback} (${err.code})`;
     return fallback;
+  }
+
+  async function logClientError(type, err, extra = {}) {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    try {
+      await addDoc(collection(db, "clientErrors"), {
+        uid,
+        type,
+        code: String(err?.code || ""),
+        message: String(err?.message || "unknown"),
+        page: "enter-room",
+        extra,
+        createdAt: serverTimestamp()
+      });
+    } catch (_) {
+      // no-op
+    }
   }
 
   function renderRoomList(currentGroupId) {
@@ -149,6 +167,7 @@ document.addEventListener("DOMContentLoaded", () => {
       alert("방에 입장했습니다.");
     } catch (err) {
       console.error("joinRoom failed", err);
+      await logClientError("joinRoom_failed", err, { roomId: room.id || null, visibility: room.visibility || "public" });
       alert(extractFunctionErrorMessage(err, "입장 처리 중 오류가 발생했습니다."));
     } finally {
       joinByCodeBtn.disabled = false;

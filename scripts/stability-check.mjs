@@ -37,7 +37,7 @@ mustContain("profile.html", /id="nicknameInput"/, "profile nickname input");
 mustContain("profile.js", /currentChallengeStreak/, "profile streak field");
 
 mustContain("index.html", /id="goProfileBtn"/, "profile nav from lobby");
-mustContain("enter-room.html", /id="goProfileBtn"/, "profile nav from enter room");
+mustContain("enter-room.html", /id="goGroupBtn"/, "group nav from enter room");
 
 mustContain("admin.html", /운영 대시보드/, "admin page");
 mustContain("admin.js", /getCountFromServer/, "admin counters");
