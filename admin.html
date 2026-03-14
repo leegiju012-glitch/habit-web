@@ -23,6 +23,8 @@
         <div class="item"><div class="item-left"><div class="item-name">대기 방</div></div><div class="badge" id="statWaiting">-</div></div>
         <div class="item"><div class="item-left"><div class="item-name">진행 방</div></div><div class="badge" id="statActive">-</div></div>
         <div class="item"><div class="item-left"><div class="item-name">오늘 인증 수</div></div><div class="badge" id="statCheckins">-</div></div>
+        <div class="item"><div class="item-left"><div class="item-name">오늘 오류 수</div></div><div class="badge" id="statErrorsToday">-</div></div>
+        <div class="item"><div class="item-left"><div class="item-name">오늘 오류율</div></div><div class="badge" id="statErrorRateToday">-</div></div>
       </div>
 
       <div class="panel-block">
@@ -36,6 +38,11 @@
       </div>
 
       <div class="panel-block">
+        <p class="section-title">오류 많은 사용자(오늘)</p>
+        <ul class="list" id="errorUserList"></ul>
+      </div>
+
+      <div class="panel-block">
         <p class="section-title">최근 정리 결과</p>
         <div class="pill" id="cleanupResult">아직 실행 전</div>
       </div>
@@ -44,6 +51,6 @@
     </div>
   </div>
 
-  <script type="module" src="admin.js?v=20260313b"></script>
+  <script type="module" src="admin.js?v=20260313c"></script>
 </body>
 </html>

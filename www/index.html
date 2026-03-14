@@ -36,6 +36,9 @@
           <input id="roomTopicInput" class="field" placeholder="주제" maxlength="40" />
         </div>
         <div class="input-row">
+          <input id="roomRuleInput" class="field" placeholder="인증 사진 규칙 (예: 오늘 운동화 신고 거울샷)" maxlength="120" />
+        </div>
+        <div class="input-row">
           <select id="roomPrivacySelect" class="field select-field">
             <option value="public">공개방</option>
             <option value="private">비공개방(비밀번호)</option>
@@ -53,8 +56,9 @@
         </div>
       </div>
 
-      <div class="panel-block">
-        <div class="pill" id="myRoomPill" style="display:none;"></div>
+      <div class="panel-block" id="myRoomSection" style="display:none;">
+        <p class="section-title" style="margin-bottom:8px;">내 방 목록</p>
+        <ul class="list" id="myRoomList"></ul>
       </div>
 
       <div class="profile" id="profileBox" style="display:none;">
@@ -73,7 +77,7 @@
     </div>
   </div>
 
-  <script type="module" src="app.js?v=20260313c"></script>
+  <script type="module" src="app.js?v=20260314c"></script>
 
   </body>
 </html>

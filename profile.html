@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>내 프로필</title>
-  <link rel="stylesheet" href="style.css?v=20260312c" />
+  <link rel="stylesheet" href="style.css?v=20260313b" />
   <link rel="icon" type="image/png" href="/icons/icon-192.png" />
 </head>
 <body>
@@ -29,19 +29,78 @@
       <div class="panel-block">
         <div class="pill" id="streakNow">현재 챌린지 연속: 0일</div>
         <div class="pill" id="streakLast" style="margin-left:6px;">이전 챌린지 기록: 0일</div>
+        <div class="pill" id="groupStatus" style="margin-left:6px;">현재 참여 방: 없음</div>
       </div>
 
       <div class="panel-block">
-        <div class="pill" id="groupStatus">현재 참여 방: 없음</div>
+        <div class="row" style="margin-top:0; margin-bottom:8px;">
+          <button id="toggleStatsBtn" class="btn ghost compact">통계</button>
+          <button id="toggleNicknameBtn" class="btn ghost compact">닉네임 변경</button>
+        </div>
       </div>
 
-      <div id="nicknameBox" class="input-row panel-block">
+      <div class="panel-block" id="statsPanel" style="display:none;">
+        <p class="section-title" style="margin-bottom:8px;">개인 통계 (Pro)</p>
+        <div class="list" style="margin-top:0;">
+          <div class="item">
+            <div class="item-left"><div class="item-name">회원 등급</div></div>
+            <div class="badge" id="statPlan">-</div>
+          </div>
+          <div class="item">
+            <div class="item-left"><div class="item-name">참여 방 수</div></div>
+            <div class="badge" id="statRooms">-</div>
+          </div>
+          <div class="item">
+            <div class="item-left"><div class="item-name">최근 7일 인증률</div></div>
+            <div class="badge" id="stat7dRate">-</div>
+          </div>
+        </div>
+        <p class="notice" id="proPerkHint">Pro 혜택: 방 최대 5개, 고급 통계, 광고 제거</p>
+      </div>
+
+      <div class="panel-block">
+        <p class="section-title" style="margin-bottom:8px;">결제</p>
+        <div class="item">
+          <div class="item-left">
+            <div class="item-name">광고 제거 영구권</div>
+            <div class="item-sub">₩5,500 · 1회 구매(영구)</div>
+            <div class="item-sub" id="adFreeStatus">상태 확인 중...</div>
+          </div>
+          <button id="openAdFreePayBtn" class="btn ghost compact">결제</button>
+        </div>
+        <div class="item" style="margin-top:10px;">
+          <div class="item-left">
+            <div class="item-name">Pro 이용권</div>
+            <div class="item-sub">월 ₩3,900 · 방 최대 5개 + 고급 통계 + 광고 제거</div>
+            <div class="item-sub" id="proStatus">상태 확인 중...</div>
+          </div>
+          <button id="openProPayBtn" class="btn ghost compact">결제</button>
+        </div>
+        <div id="purchaseActionPanel" class="panel-block" style="display:none;">
+          <p class="notice" id="purchaseTargetLabel">상품 선택</p>
+          <div class="input-row" style="margin-top:8px;">
+            <select id="purchaseProvider" class="field select-field">
+              <option value="toss">Toss</option>
+              <option value="apple">Apple</option>
+            </select>
+            <input id="purchaseReceiptInput" class="field" placeholder="영수증/거래ID (선택)" maxlength="200" />
+          </div>
+          <div class="row" style="margin-top:6px;">
+            <button id="buySelectedBtn" class="btn ghost compact">구매</button>
+            <button id="restoreSelectedBtn" class="btn ghost compact">복원</button>
+            <button id="closePurchasePanelBtn" class="btn ghost compact">닫기</button>
+          </div>
+        </div>
+        <p class="notice">현재 테스트 모드: Toss는 `TOSS_TEST_*`, Apple은 `APPLE_TEST_*` 값으로 검증됩니다.</p>
+      </div>
+
+      <div id="nicknameBox" class="input-row panel-block" style="display:none;">
         <input id="nicknameInput" class="field" placeholder="닉네임 (2~10자)" maxlength="10" />
         <button id="saveNickBtn" class="btn ghost compact">닉네임 저장</button>
       </div>
     </div>
   </div>
 
-  <script type="module" src="profile.js?v=20260312c"></script>
+  <script type="module" src="profile.js?v=20260313j"></script>
 </body>
 </html>

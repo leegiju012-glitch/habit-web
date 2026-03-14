@@ -39,6 +39,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   let currentUser = null;
   let currentGroupId = null;
+  const requestedGroupId = new URLSearchParams(location.search).get("groupId") || null;
   let groupUnsub = null;
   let userUnsub = null;
   const memberWatchers = new Map();
@@ -51,6 +52,19 @@ document.addEventListener("DOMContentLoaded", () => {
   let rendering = false;
   let renderQueued = false;
   let todayKey = "";
+  let checkinActionBusy = false;
+
+  function normalizeJoinedGroupIds(userData = {}) {
+    const raw = Array.isArray(userData?.joinedGroupIds) ? userData.joinedGroupIds : [];
+    const out = [];
+    for (const gid of raw) {
+      if (typeof gid !== "string" || !gid.trim()) continue;
+      if (!out.includes(gid)) out.push(gid);
+    }
+    const current = typeof userData?.currentGroupId === "string" ? userData.currentGroupId : "";
+    if (current && !out.includes(current)) out.push(current);
+    return out;
+  }
 
   function extractFunctionErrorMessage(err, fallback) {
     if (err?.details && typeof err.details === "string") return err.details;
@@ -174,12 +188,16 @@ document.addEventListener("DOMContentLoaded", () => {
             uid: currentUser.uid,
             name: currentUser.displayName || "",
             email: currentUser.email || "",
-            nickname: currentUser.displayName || "사용자",
-            currentChallengeStreak: 0,
-            lastChallengeStreak: 0,
-            currentGroupId: null,
-            currentGroupInviteCode: null,
-            createdAt: serverTimestamp()
+          nickname: currentUser.displayName || "사용자",
+          currentChallengeStreak: 0,
+          lastChallengeStreak: 0,
+          isAdFree: false,
+          adFreePurchasedAt: null,
+          plan: "free",
+          joinedGroupIds: [],
+          currentGroupId: null,
+          currentGroupInviteCode: null,
+          createdAt: serverTimestamp()
           });
           latestUserData = {
             uid: currentUser.uid,
@@ -197,14 +215,21 @@ document.addEventListener("DOMContentLoaded", () => {
         userData = latestUserData;
       }
 
-      if (!userData.currentGroupId) {
+      const joined = normalizeJoinedGroupIds(userData);
+      if (!joined.length) {
         statusEl.textContent = "현재 참여 중인 그룹이 없습니다.";
         location.href = "/";
         return;
       }
 
-      if (userData.currentGroupId !== currentGroupId) {
-        currentGroupId = userData.currentGroupId;
+      if (!currentGroupId || !joined.includes(currentGroupId)) {
+        if (requestedGroupId && joined.includes(requestedGroupId)) {
+          currentGroupId = requestedGroupId;
+        } else if (userData.currentGroupId && joined.includes(userData.currentGroupId)) {
+          currentGroupId = userData.currentGroupId;
+        } else {
+          currentGroupId = joined[0];
+        }
         setGroupWatcher(currentGroupId);
       }
 
@@ -507,6 +532,8 @@ document.addEventListener("DOMContentLoaded", () => {
             ? "승인됨 · 사진 변경/삭제"
             : (myTodayStatus === "rejected" ? "반려됨 · 사진 변경/삭제" : "검토중 · 사진 변경/삭제");
           checkinBtn.onclick = async () => {
+            if (checkinActionBusy) return;
+            checkinActionBusy = true;
             const willChange = confirm("확인을 누르면 사진 변경, 취소를 누르면 삭제 선택으로 이동합니다.");
             checkinBtn.disabled = true;
             checkinBtn.textContent = "처리중...";
@@ -565,20 +592,25 @@ document.addEventListener("DOMContentLoaded", () => {
               alert("인증 처리 중 오류가 발생했습니다.");
             } finally {
               checkinBtn.disabled = false;
+              checkinActionBusy = false;
               scheduleRender();
             }
           };
         } else if (!challengeLocked) {
           checkinBtn.textContent = "오늘 인증 제출";
           checkinBtn.onclick = async () => {
+            if (checkinActionBusy) return;
+            checkinActionBusy = true;
             if (!fileInput || !fileInput.files[0]) {
               alert("먼저 인증 사진을 선택해 주세요.");
+              checkinActionBusy = false;
               return;
             }
 
             const file = fileInput.files[0];
             if (hasMyTodayCheckin) {
               alert("오늘은 이미 인증이 완료되었습니다.");
+              checkinActionBusy = false;
               return;
             }
 
@@ -608,6 +640,7 @@ document.addEventListener("DOMContentLoaded", () => {
               alert("인증 업로드 중 오류가 발생했습니다.");
             } finally {
               checkinBtn.disabled = false;
+              checkinActionBusy = false;
               scheduleRender();
             }
           };
@@ -663,6 +696,10 @@ document.addEventListener("DOMContentLoaded", () => {
         nickname: user.displayName || "사용자",
         currentChallengeStreak: 0,
         lastChallengeStreak: 0,
+        isAdFree: false,
+        adFreePurchasedAt: null,
+        plan: "free",
+        joinedGroupIds: [],
         currentGroupId: null,
         currentGroupInviteCode: null,
         createdAt: serverTimestamp()
@@ -671,25 +708,38 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const myData = userSnap.data();
-    if (!myData.currentGroupId) {
+    const joined = normalizeJoinedGroupIds(myData);
+    if (!joined.length) {
       statusEl.textContent = "현재 참여 중인 그룹이 없습니다.";
       return;
     }
     latestUserData = myData;
-
-    currentGroupId = myData.currentGroupId;
+    if (requestedGroupId && joined.includes(requestedGroupId)) {
+      currentGroupId = requestedGroupId;
+    } else if (myData.currentGroupId && joined.includes(myData.currentGroupId)) {
+      currentGroupId = myData.currentGroupId;
+    } else {
+      currentGroupId = joined[0];
+    }
 
     if (userUnsub) userUnsub();
     userUnsub = onSnapshot(userRef, (snap) => {
       if (!snap.exists()) return;
       const latest = snap.data();
       latestUserData = latest;
-      if (!latest.currentGroupId) {
+      const latestJoined = normalizeJoinedGroupIds(latest);
+      if (!latestJoined.length) {
         location.href = "/";
         return;
       }
-      if (latest.currentGroupId !== currentGroupId) {
-        currentGroupId = latest.currentGroupId;
+      if (!latestJoined.includes(currentGroupId)) {
+        if (requestedGroupId && latestJoined.includes(requestedGroupId)) {
+          currentGroupId = requestedGroupId;
+        } else if (latest.currentGroupId && latestJoined.includes(latest.currentGroupId)) {
+          currentGroupId = latest.currentGroupId;
+        } else {
+          currentGroupId = latestJoined[0];
+        }
         setGroupWatcher(currentGroupId);
       }
       scheduleRender();

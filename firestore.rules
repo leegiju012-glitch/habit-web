@@ -131,10 +131,13 @@ service cloud.firestore {
     // - 본인 체크인만 생성/수정 가능
     // - 읽기는 로그인 사용자 허용 (그룹 화면 렌더링용)
     match /checkins/{checkinId} {
-      allow read: if signedIn()
-        && resource.data.groupId is string
-        && exists(/databases/$(database)/documents/groups/$(resource.data.groupId))
-        && get(/databases/$(database)/documents/groups/$(resource.data.groupId)).data.members.hasAny([request.auth.uid]);
+      allow read: if isAdmin()
+        || (
+          signedIn()
+          && resource.data.groupId is string
+          && exists(/databases/$(database)/documents/groups/$(resource.data.groupId))
+          && get(/databases/$(database)/documents/groups/$(resource.data.groupId)).data.members.hasAny([request.auth.uid])
+        );
 
       allow create, update: if signedIn()
         && request.resource.data.uid == request.auth.uid
@@ -187,6 +190,13 @@ service cloud.firestore {
         ]);
       allow read: if isAdmin();
       allow update, delete: if false;
+    }
+
+    // purchaseEvents/{eventId}
+    // - 결제 검증 결과 로그 (서버 전용 기록, 관리자 읽기만 허용)
+    match /purchaseEvents/{eventId} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
   }
 }

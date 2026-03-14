@@ -51,16 +51,20 @@ document.addEventListener("DOMContentLoaded", () => {
   const roomCreateBox = document.getElementById("roomCreateBox");
   const roomTitleInput = document.getElementById("roomTitleInput");
   const roomTopicInput = document.getElementById("roomTopicInput");
+  const roomRuleInput = document.getElementById("roomRuleInput");
   const roomPrivacySelect = document.getElementById("roomPrivacySelect");
   const roomPasswordInput = document.getElementById("roomPasswordInput");
   const createRoomBtn = document.getElementById("createRoomBtn");
-  const myRoomPill = document.getElementById("myRoomPill");
+  const myRoomSection = document.getElementById("myRoomSection");
+  const myRoomList = document.getElementById("myRoomList");
   const roomActionBox = document.getElementById("roomActionBox");
   const enterRoomBtn = document.getElementById("enterRoomBtn");
   const openCreateRoomBtn = document.getElementById("openCreateRoomBtn");
 
   let userDocUnsub = null;
   let currentUserGroupId = null;
+  let currentUserJoinedGroupIds = [];
+  let currentUserPlan = "free";
   let createFormVisible = false;
   const groupTitleCache = new Map();
 
@@ -108,10 +112,15 @@ document.addEventListener("DOMContentLoaded", () => {
     return nickname.length >= 2 && nickname.length <= 10;
   }
 
+  function maxGroupsForPlan(plan) {
+    return plan === "pro" ? 5 : 1;
+  }
+
   function setLobbyEnabled(enabled) {
     if (createRoomBtn) createRoomBtn.disabled = !enabled;
     if (roomTitleInput) roomTitleInput.disabled = !enabled;
     if (roomTopicInput) roomTopicInput.disabled = !enabled;
+    if (roomRuleInput) roomRuleInput.disabled = !enabled;
     if (roomPrivacySelect) roomPrivacySelect.disabled = !enabled;
     if (roomPasswordInput) roomPasswordInput.disabled = !enabled;
     if (enterRoomBtn) enterRoomBtn.disabled = !enabled;
@@ -137,31 +146,25 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function renderLobbyState(userData) {
     const inGroup = !!userData.currentGroupId;
+    const plan = userData?.plan === "pro" ? "pro" : "free";
+    const joined = Array.isArray(userData?.joinedGroupIds)
+      ? userData.joinedGroupIds.filter((gid) => typeof gid === "string" && gid)
+      : (userData?.currentGroupId ? [userData.currentGroupId] : []);
+    const atLimit = joined.length >= maxGroupsForPlan(plan);
     if (roomActionBox) roomActionBox.style.display = "flex";
 
     if (inGroup) {
-      setLobbyEnabled(false);
-      if (roomActionBox) roomActionBox.style.display = "none";
-      setCreateFormVisible(false);
-      if (myRoomPill) {
-        myRoomPill.style.display = "inline-flex";
-        const cachedTitle = groupTitleCache.get(userData.currentGroupId) || "";
-        myRoomPill.textContent = cachedTitle
-          ? `참여 중인 방: ${cachedTitle} · ID ${userData.currentGroupId} (내 그룹 이동)`
-          : `참여 중인 방 ID: ${userData.currentGroupId} (내 그룹 이동)`;
-        myRoomPill.style.cursor = "pointer";
-        myRoomPill.onclick = () => { location.href = "/group.html"; };
-      }
+      // 참여 중이어도 다중 방 전환/참가 흐름을 위해 버튼은 계속 노출한다.
+      setLobbyEnabled(true);
+      if (createRoomBtn) createRoomBtn.disabled = atLimit;
+      setCreateFormVisible(createFormVisible);
+      renderMyRooms(userData);
     } else {
       setLobbyEnabled(true);
       if (roomActionBox) roomActionBox.style.display = "flex";
+      if (createRoomBtn) createRoomBtn.disabled = atLimit;
       setCreateFormVisible(createFormVisible);
-      if (myRoomPill) {
-        myRoomPill.style.display = "none";
-        myRoomPill.textContent = "";
-        myRoomPill.style.cursor = "default";
-        myRoomPill.onclick = null;
-      }
+      renderMyRooms(userData);
     }
   }
 
@@ -171,14 +174,57 @@ document.addEventListener("DOMContentLoaded", () => {
       const groupSnap = await getDoc(doc(db, "groups", groupId));
       const title = groupSnap.exists() ? ((groupSnap.data()?.title || "").trim()) : "";
       groupTitleCache.set(groupId, title);
-      if (myRoomPill && myRoomPill.style.display !== "none") {
-        myRoomPill.textContent = title
-          ? `참여 중인 방: ${title} · ID ${groupId} (내 그룹 이동)`
-          : `참여 중인 방 ID: ${groupId} (내 그룹 이동)`;
-      }
+      const activeUserData = {
+        currentGroupId: currentUserGroupId,
+        joinedGroupIds: currentUserJoinedGroupIds
+      };
+      renderMyRooms(activeUserData);
     } catch (err) {
       console.warn("refreshGroupTitle failed", err);
     }
+  }
+
+  function goGroup(groupId) {
+    if (!groupId) return;
+    location.href = `/group.html?groupId=${encodeURIComponent(groupId)}`;
+  }
+
+  function renderMyRooms(userData) {
+    if (!myRoomSection || !myRoomList) return;
+    const joined = Array.isArray(userData?.joinedGroupIds)
+      ? userData.joinedGroupIds.filter((gid) => typeof gid === "string" && gid)
+      : (userData?.currentGroupId ? [userData.currentGroupId] : []);
+
+    if (!joined.length) {
+      myRoomSection.style.display = "none";
+      myRoomList.innerHTML = "";
+      return;
+    }
+
+    myRoomSection.style.display = "block";
+    myRoomList.innerHTML = "";
+
+    joined.forEach((groupId) => {
+      const li = document.createElement("li");
+      li.className = "item";
+
+      const title = groupTitleCache.get(groupId) || "방 이름 불러오는 중...";
+      const left = document.createElement("div");
+      left.className = "item-left";
+      left.innerHTML = `
+        <div class="item-name">${title}</div>
+        <div class="item-sub">ID ${groupId}</div>
+      `;
+
+      const openBtn = document.createElement("button");
+      openBtn.className = "btn ghost compact";
+      openBtn.textContent = "내 그룹으로 이동";
+      openBtn.onclick = () => goGroup(groupId);
+
+      li.appendChild(left);
+      li.appendChild(openBtn);
+      myRoomList.appendChild(li);
+    });
   }
 
   async function ensureNickname(user) {
@@ -224,7 +270,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (createRoomBtn) createRoomBtn.onclick = async () => {
     const user = auth.currentUser;
-    if (!user || !roomTitleInput || !roomTopicInput || !roomPrivacySelect || !roomPasswordInput) return;
+    if (!user || !roomTitleInput || !roomTopicInput || !roomRuleInput || !roomPrivacySelect || !roomPasswordInput) return;
 
     createRoomBtn.disabled = true;
     try {
@@ -232,13 +278,19 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!nickname) return;
 
       const mySnap = await getDoc(doc(db, "users", user.uid));
-      if (mySnap.exists() && mySnap.data().currentGroupId) {
-        alert("이미 참여 중인 방이 있습니다.");
+      const myData = mySnap.exists() ? mySnap.data() : {};
+      const plan = myData?.plan === "pro" ? "pro" : "free";
+      const joined = Array.isArray(myData?.joinedGroupIds)
+        ? myData.joinedGroupIds.filter((gid) => typeof gid === "string" && gid)
+        : (myData?.currentGroupId ? [myData.currentGroupId] : []);
+      if (joined.length >= maxGroupsForPlan(plan)) {
+        alert(plan === "pro" ? "Pro 이용권 최대 참여 방(5개)에 도달했습니다." : "무료는 1개 방만 참여할 수 있습니다.");
         return;
       }
 
       const title = (roomTitleInput.value || "").trim();
       const topic = (roomTopicInput.value || "").trim();
+      const checkinRule = (roomRuleInput.value || "").trim();
       const visibility = roomPrivacySelect.value === "private" ? "private" : "public";
       const password = (roomPasswordInput.value || "").trim();
 
@@ -251,6 +303,14 @@ document.addEventListener("DOMContentLoaded", () => {
         alert("주제를 입력해 주세요.");
         return;
       }
+      if (!checkinRule) {
+        alert("인증 사진 규칙을 입력해 주세요.");
+        return;
+      }
+      if (checkinRule.length > 120) {
+        alert("인증 사진 규칙은 120자 이내로 입력해 주세요.");
+        return;
+      }
 
       if (visibility === "private") {
         if (password.length < 4) {
@@ -260,18 +320,12 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const createRoomFn = httpsCallable(functions, "createRoom");
-      const result = await createRoomFn({ title, topic, visibility, password });
-      const createdTitle = result?.data?.title || title;
-      const roomCode = result?.data?.roomCode || "-";
-
-      if (myRoomPill) {
-        myRoomPill.style.display = "inline-flex";
-        myRoomPill.textContent = `내 방: ${createdTitle} (코드 ${roomCode})`;
-      }
+      await createRoomFn({ title, topic, checkinRule, visibility, password });
       alert("방이 생성되었습니다.");
 
       roomTitleInput.value = "";
       roomTopicInput.value = "";
+      roomRuleInput.value = "";
       roomPasswordInput.value = "";
       roomPrivacySelect.value = "public";
       updatePasswordFieldVisibility();
@@ -299,7 +353,8 @@ document.addEventListener("DOMContentLoaded", () => {
       if (roomCreateBox) roomCreateBox.style.display = "none";
       createFormVisible = false;
       if (roomActionBox) roomActionBox.style.display = "none";
-      if (myRoomPill) myRoomPill.style.display = "none";
+      if (myRoomSection) myRoomSection.style.display = "none";
+      if (myRoomList) myRoomList.innerHTML = "";
       return;
     }
 
@@ -333,6 +388,10 @@ document.addEventListener("DOMContentLoaded", () => {
         currentGroupInviteCode: null,
         currentChallengeStreak: 0,
         lastChallengeStreak: 0,
+        isAdFree: false,
+        adFreePurchasedAt: null,
+        plan: "free",
+        joinedGroupIds: [],
         createdAt: serverTimestamp()
       });
       userSnap = await getDoc(userRef);
@@ -364,18 +423,32 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!snap.exists()) return;
       const latest = snap.data();
       currentUserGroupId = latest.currentGroupId || null;
+      currentUserJoinedGroupIds = Array.isArray(latest.joinedGroupIds)
+        ? latest.joinedGroupIds.filter((gid) => typeof gid === "string" && gid)
+        : (latest.currentGroupId ? [latest.currentGroupId] : []);
+      currentUserPlan = latest.plan === "pro" ? "pro" : "free";
       if (userName) userName.textContent = latest.nickname || user.displayName || "사용자";
       renderLobbyState(latest);
-      if (latest.currentGroupId) {
-        refreshGroupTitle(latest.currentGroupId);
+      const joinedForTitle = Array.isArray(latest.joinedGroupIds)
+        ? latest.joinedGroupIds.filter((gid) => typeof gid === "string" && gid)
+        : (latest.currentGroupId ? [latest.currentGroupId] : []);
+      for (const gid of joinedForTitle) {
+        refreshGroupTitle(gid);
       }
     });
 
     currentUserGroupId = myData.currentGroupId || null;
+    currentUserJoinedGroupIds = Array.isArray(myData.joinedGroupIds)
+      ? myData.joinedGroupIds.filter((gid) => typeof gid === "string" && gid)
+      : (myData.currentGroupId ? [myData.currentGroupId] : []);
+    currentUserPlan = myData.plan === "pro" ? "pro" : "free";
     updatePasswordFieldVisibility();
     renderLobbyState(myData);
-    if (myData.currentGroupId) {
-      refreshGroupTitle(myData.currentGroupId);
+    const initialJoined = Array.isArray(myData.joinedGroupIds)
+      ? myData.joinedGroupIds.filter((gid) => typeof gid === "string" && gid)
+      : (myData.currentGroupId ? [myData.currentGroupId] : []);
+    for (const gid of initialJoined) {
+      refreshGroupTitle(gid);
     }
   });
 

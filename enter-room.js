@@ -48,10 +48,16 @@ document.addEventListener("DOMContentLoaded", () => {
   let roomListUnsub = null;
   let latestRooms = [];
   let currentUserGroupId = null;
+  let currentUserJoinedGroupIds = [];
+  let currentUserPlan = "free";
 
   function isValidNickname(value) {
     const nickname = (value || "").trim();
     return nickname.length >= 2 && nickname.length <= 10;
+  }
+
+  function maxGroupsForPlan(plan) {
+    return plan === "pro" ? 5 : 1;
   }
 
   function extractFunctionErrorMessage(err, fallback) {
@@ -101,15 +107,19 @@ document.addEventListener("DOMContentLoaded", () => {
       const membersCount = Array.isArray(room.members) ? room.members.length : 0;
       const title = room.title || "제목 없는 방";
       const topic = room.topic || "주제 미설정";
+      const checkinRule = (room.checkinRule || "").trim();
       const visibilityLabel = room.visibility === "private" ? "비공개" : "공개";
       const roomCode = room.roomCode || "-";
       const isMine = currentGroupId && currentGroupId === room.id;
+      const alreadyJoined = currentUserJoinedGroupIds.includes(room.id);
+      const atLimit = !alreadyJoined && currentUserJoinedGroupIds.length >= maxGroupsForPlan(currentUserPlan);
 
       const left = document.createElement("div");
       left.className = "item-left";
       left.innerHTML = `
         <div class="item-name">${title}</div>
         <div class="item-sub">${topic}</div>
+        <div class="item-sub">${checkinRule ? `인증 규칙: ${checkinRule}` : "인증 규칙 미설정"}</div>
         <div class="item-sub">${visibilityLabel} · ${membersCount}/5 · 코드 ${roomCode}</div>
       `;
 
@@ -118,8 +128,8 @@ document.addEventListener("DOMContentLoaded", () => {
       joinBtn.style.width = "auto";
       joinBtn.style.padding = "8px 12px";
       joinBtn.style.borderRadius = "10px";
-      joinBtn.textContent = isMine ? "참여 중" : "입장";
-      joinBtn.disabled = !!isMine || membersCount >= 5 || !!currentGroupId;
+      joinBtn.textContent = isMine ? "현재 방" : (alreadyJoined ? "보유 방" : "입장");
+      joinBtn.disabled = !!isMine || membersCount >= 5 || atLimit;
       joinBtn.onclick = () => joinRoom(room);
 
       li.appendChild(left);
@@ -142,8 +152,10 @@ document.addEventListener("DOMContentLoaded", () => {
   async function joinRoom(room) {
     const user = auth.currentUser;
     if (!user) return;
-    if (currentUserGroupId) {
-      alert("이미 참여 중인 방이 있습니다.");
+    const alreadyJoined = currentUserJoinedGroupIds.includes(room.id);
+    const atLimit = !alreadyJoined && currentUserJoinedGroupIds.length >= maxGroupsForPlan(currentUserPlan);
+    if (atLimit) {
+      alert(currentUserPlan === "pro" ? "Pro 이용권 최대 참여 방(5개)에 도달했습니다." : "무료는 1개 방만 참여할 수 있습니다.");
       return;
     }
 
@@ -151,6 +163,11 @@ document.addEventListener("DOMContentLoaded", () => {
       joinByCodeBtn.disabled = true;
       const nickname = await ensureNickname(user);
       if (!nickname) return;
+      const checkinRule = (room.checkinRule || "").trim();
+      if (checkinRule) {
+        const accepted = confirm(`이 방의 인증 규칙:\n\n${checkinRule}\n\n위 규칙을 확인했고 수락하면 입장합니다.`);
+        if (!accepted) return;
+      }
 
       let password = "";
       if (room.visibility === "private") {
@@ -163,7 +180,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const joinRoomFn = httpsCallable(functions, "joinRoom");
-      await joinRoomFn({ groupId: room.id, password });
+      await joinRoomFn({ groupId: room.id, password, acceptedRule: true });
       alert("방에 입장했습니다.");
     } catch (err) {
       console.error("joinRoom failed", err);
@@ -239,6 +256,10 @@ document.addEventListener("DOMContentLoaded", () => {
         currentGroupInviteCode: null,
         currentChallengeStreak: 0,
         lastChallengeStreak: 0,
+        isAdFree: false,
+        adFreePurchasedAt: null,
+        plan: "free",
+        joinedGroupIds: [],
         createdAt: serverTimestamp()
       });
       userSnap = await getDoc(userRef);
@@ -253,6 +274,10 @@ document.addEventListener("DOMContentLoaded", () => {
     if (userName) userName.textContent = myData.nickname || user.displayName || "사용자";
     if (userMail) userMail.textContent = user.email || "";
     currentUserGroupId = myData.currentGroupId || null;
+    currentUserJoinedGroupIds = Array.isArray(myData.joinedGroupIds)
+      ? myData.joinedGroupIds.filter((gid) => typeof gid === "string" && gid)
+      : (myData.currentGroupId ? [myData.currentGroupId] : []);
+    currentUserPlan = myData.plan === "pro" ? "pro" : "free";
     if (goGroupBtn) goGroupBtn.style.display = currentUserGroupId ? "block" : "none";
 
     avatarBox.innerHTML = "";
@@ -267,6 +292,10 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!snap.exists()) return;
       const latest = snap.data();
       currentUserGroupId = latest.currentGroupId || null;
+      currentUserJoinedGroupIds = Array.isArray(latest.joinedGroupIds)
+        ? latest.joinedGroupIds.filter((gid) => typeof gid === "string" && gid)
+        : (latest.currentGroupId ? [latest.currentGroupId] : []);
+      currentUserPlan = latest.plan === "pro" ? "pro" : "free";
       if (userName) userName.textContent = latest.nickname || user.displayName || "사용자";
       if (goGroupBtn) goGroupBtn.style.display = currentUserGroupId ? "block" : "none";
       renderRoomList(currentUserGroupId);

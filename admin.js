@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, query, where, getCountFromServer, getDocs, limit, orderBy } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, collection, query, where, getCountFromServer, getDocs, limit, orderBy, Timestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -26,8 +26,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const statWaiting = document.getElementById("statWaiting");
   const statActive = document.getElementById("statActive");
   const statCheckins = document.getElementById("statCheckins");
+  const statErrorsToday = document.getElementById("statErrorsToday");
+  const statErrorRateToday = document.getElementById("statErrorRateToday");
   const roomList = document.getElementById("roomList");
   const errorList = document.getElementById("errorList");
+  const errorUserList = document.getElementById("errorUserList");
   const runCleanupBtn = document.getElementById("runCleanupBtn");
   const cleanupResult = document.getElementById("cleanupResult");
 
@@ -59,18 +62,29 @@ document.addEventListener("DOMContentLoaded", () => {
       const waitingQ = query(collection(db, "groups"), where("status", "==", "waiting"));
       const activeQ = query(collection(db, "groups"), where("status", "==", "active"));
       const checkinsQ = query(collection(db, "checkins"), where("date", "==", todayStr()));
+      const dayStart = new Date();
+      dayStart.setHours(0, 0, 0, 0);
+      const errorsTodayQ = query(
+        collection(db, "clientErrors"),
+        where("createdAt", ">=", Timestamp.fromDate(dayStart))
+      );
 
-      const [usersCnt, waitingCnt, activeCnt, checkinsCnt] = await Promise.all([
+      const [usersCnt, waitingCnt, activeCnt, checkinsCnt, errorsTodayCnt] = await Promise.all([
         getCountFromServer(usersQ),
         getCountFromServer(waitingQ),
         getCountFromServer(activeQ),
-        getCountFromServer(checkinsQ)
+        getCountFromServer(checkinsQ),
+        getCountFromServer(errorsTodayQ)
       ]);
 
       statUsers.textContent = String(usersCnt.data().count);
       statWaiting.textContent = String(waitingCnt.data().count);
       statActive.textContent = String(activeCnt.data().count);
       statCheckins.textContent = String(checkinsCnt.data().count);
+      statErrorsToday.textContent = String(errorsTodayCnt.data().count);
+      const denominator = Math.max(1, Number(checkinsCnt.data().count) + Number(errorsTodayCnt.data().count));
+      const rate = ((Number(errorsTodayCnt.data().count) / denominator) * 100).toFixed(1);
+      statErrorRateToday.textContent = `${rate}%`;
 
       const waitingRoomsSnap = await getDocs(query(waitingQ, limit(20)));
       roomList.innerHTML = "";
@@ -116,6 +130,34 @@ document.addEventListener("DOMContentLoaded", () => {
             `<div class="item-sub">${e.message || "-"}</div>` +
             `</div>`;
           errorList.appendChild(li);
+        });
+      }
+
+      const errorByUser = new Map();
+      errorSnap.docs.forEach((d) => {
+        const e = d.data();
+        const uid = String(e.uid || "unknown");
+        errorByUser.set(uid, (errorByUser.get(uid) || 0) + 1);
+      });
+      const topUsers = [...errorByUser.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5);
+      errorUserList.innerHTML = "";
+      if (!topUsers.length) {
+        const li = document.createElement("li");
+        li.className = "item";
+        li.innerHTML = '<div class="item-left"><div class="item-name">대상 없음</div><div class="item-sub">오늘 오류 사용자 집계가 없습니다.</div></div>';
+        errorUserList.appendChild(li);
+      } else {
+        topUsers.forEach(([uid, cnt]) => {
+          const li = document.createElement("li");
+          li.className = "item";
+          li.innerHTML =
+            `<div class="item-left">` +
+            `<div class="item-name">${uid}</div>` +
+            `<div class="item-sub">오류 ${cnt}건</div>` +
+            `</div>`;
+          errorUserList.appendChild(li);
         });
       }
 
