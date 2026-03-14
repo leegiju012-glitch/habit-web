@@ -171,6 +171,19 @@ service cloud.firestore {
       allow delete: if signedIn() && resource.data.uid == request.auth.uid;
     }
 
+    // groupMemberStats/{groupId_uid}
+    // - 방별 연속일/기록 통계 (서버 함수 전용 쓰기)
+    match /groupMemberStats/{statsId} {
+      allow read: if isAdmin()
+        || (
+          signedIn()
+          && resource.data.groupId is string
+          && exists(/databases/$(database)/documents/groups/$(resource.data.groupId))
+          && get(/databases/$(database)/documents/groups/$(resource.data.groupId)).data.members.hasAny([request.auth.uid])
+        );
+      allow write: if false;
+    }
+
     // clientErrors/{autoId}
     // - 클라이언트 실패 이벤트 로그(운영 대시보드용)
     match /clientErrors/{id} {

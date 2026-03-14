@@ -735,6 +735,10 @@ function yesterdayStr(dateStr) {
   return d.toISOString().slice(0, 10);
 }
 
+function groupMemberStatsRef(groupId, uid) {
+  return db.collection("groupMemberStats").doc(`${groupId}_${uid}`);
+}
+
 export const approveCheckin = onCall(fnOptions, async (request) => {
   try {
     const voterUid = requireAuth(request);
@@ -747,19 +751,19 @@ export const approveCheckin = onCall(fnOptions, async (request) => {
     }
 
     const groupRef = db.collection("groups").doc(groupId);
-    const userRef = db.collection("users").doc(targetUid);
     const checkinRef = db.collection("checkins").doc(`${groupId}_${targetUid}_${date}`);
     const yesterdayRef = db.collection("checkins").doc(`${groupId}_${targetUid}_${yesterdayStr(date)}`);
+    const statsRef = groupMemberStatsRef(groupId, targetUid);
     let approved = false;
     let votes = 0;
     let required = 0;
 
     await db.runTransaction(async (tx) => {
-      const [groupSnap, userSnap, checkinSnap, yesterdaySnap] = await Promise.all([
+      const [groupSnap, checkinSnap, yesterdaySnap, statsSnap] = await Promise.all([
         tx.get(groupRef),
-        tx.get(userRef),
         tx.get(checkinRef),
-        tx.get(yesterdayRef)
+        tx.get(yesterdayRef),
+        tx.get(statsRef)
       ]);
 
       if (!groupSnap.exists) throw new Error("ROOM_NOT_FOUND");
@@ -802,16 +806,22 @@ export const approveCheckin = onCall(fnOptions, async (request) => {
       );
 
       if (approved && !alreadyCounted) {
-        const userData = userSnap.exists ? userSnap.data() : {};
-        const currentStreak = userData?.currentChallengeStreak || 0;
+        const stats = statsSnap.exists ? statsSnap.data() : {};
+        const currentStreak = Number(stats?.currentStreak || 0);
+        const lastApprovedDate = String(stats?.lastApprovedDate || "");
         const prevApproved = yesterdaySnap.exists && (yesterdaySnap.data()?.status || "") === "approved";
-        const nextStreak = prevApproved ? currentStreak + 1 : 1;
+        const isConsecutive = prevApproved && lastApprovedDate === yesterdayStr(date);
+        const nextStreak = isConsecutive ? currentStreak + 1 : 1;
+        const bestStreak = Math.max(Number(stats?.bestStreak || 0), nextStreak);
 
-        tx.set(
-          userRef,
-          { currentChallengeStreak: nextStreak },
-          { merge: true }
-        );
+        tx.set(statsRef, {
+          groupId,
+          uid: targetUid,
+          currentStreak: nextStreak,
+          bestStreak,
+          lastApprovedDate: date,
+          updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
 
         tx.set(
           checkinRef,
@@ -846,17 +856,17 @@ export const rejectCheckin = onCall(fnOptions, async (request) => {
     }
 
     const groupRef = db.collection("groups").doc(groupId);
-    const userRef = db.collection("users").doc(targetUid);
     const checkinRef = db.collection("checkins").doc(`${groupId}_${targetUid}_${date}`);
+    const statsRef = groupMemberStatsRef(groupId, targetUid);
     let rejected = false;
     let votes = 0;
     let required = 0;
 
     await db.runTransaction(async (tx) => {
-      const [groupSnap, userSnap, checkinSnap] = await Promise.all([
+      const [groupSnap, checkinSnap, statsSnap] = await Promise.all([
         tx.get(groupRef),
-        tx.get(userRef),
-        tx.get(checkinRef)
+        tx.get(checkinRef),
+        tx.get(statsRef)
       ]);
 
       if (!groupSnap.exists) throw new Error("ROOM_NOT_FOUND");
@@ -899,13 +909,16 @@ export const rejectCheckin = onCall(fnOptions, async (request) => {
       }
 
       if (rejected && wasCounted) {
-        const userData = userSnap.exists ? userSnap.data() : {};
-        const currentStreak = userData?.currentChallengeStreak || 0;
-        tx.set(
-          userRef,
-          { currentChallengeStreak: Math.max(currentStreak - 1, 0) },
-          { merge: true }
-        );
+        const stats = statsSnap.exists ? statsSnap.data() : {};
+        const currentStreak = Number(stats?.currentStreak || 0);
+        const lastApprovedDate = String(stats?.lastApprovedDate || "");
+        tx.set(statsRef, {
+          groupId,
+          uid: targetUid,
+          currentStreak: Math.max(currentStreak - 1, 0),
+          lastApprovedDate: lastApprovedDate === date ? null : lastApprovedDate,
+          updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
       }
     });
 

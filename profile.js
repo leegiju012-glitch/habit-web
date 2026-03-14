@@ -133,6 +133,24 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  async function refreshActiveRoomStreak(user, data) {
+    if (!streakNow) return;
+    const groupId = String(data?.currentGroupId || "").trim();
+    if (!groupId) {
+      streakNow.textContent = "현재 챌린지 연속: 0일";
+      return;
+    }
+    try {
+      const statsId = `${groupId}_${user.uid}`;
+      const statsSnap = await getDoc(doc(db, "groupMemberStats", statsId));
+      const streak = statsSnap.exists() ? Number(statsSnap.data()?.currentStreak || 0) : 0;
+      streakNow.textContent = `현재 챌린지 연속: ${streak}일`;
+    } catch (err) {
+      console.error("refreshActiveRoomStreak failed", err);
+      streakNow.textContent = "현재 챌린지 연속: 0일";
+    }
+  }
+
   saveNickBtn.onclick = async () => {
     const user = auth.currentUser;
     if (!user) return;
@@ -312,7 +330,6 @@ document.addEventListener("DOMContentLoaded", () => {
       userName.textContent = data.nickname || user.displayName || "사용자";
       userMail.textContent = user.email || "";
       nicknameInput.value = data.nickname || "";
-      streakNow.textContent = `현재 챌린지 연속: ${data.currentChallengeStreak || 0}일`;
       streakLast.textContent = `이전 챌린지 기록: ${data.lastChallengeStreak || 0}일`;
       groupStatus.textContent = data.currentGroupId
         ? `현재 참여 방: ${data.currentGroupId}`
@@ -327,6 +344,7 @@ document.addEventListener("DOMContentLoaded", () => {
           ? "상태: Pro 이용 중"
           : "상태: Free";
       }
+      refreshActiveRoomStreak(user, data);
       refreshProStats(user, data);
       goGroupBtn.style.display = data.currentGroupId ? "inline-flex" : "none";
       if (goAdminBtn) goAdminBtn.style.display = isAdmin ? "inline-flex" : "none";

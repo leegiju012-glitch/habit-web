@@ -66,7 +66,14 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentUserJoinedGroupIds = [];
   let currentUserPlan = "free";
   let createFormVisible = false;
+  let latestLobbyUserData = null;
+  let roomDayKey = "";
+  let roomDayTimer = null;
   const groupTitleCache = new Map();
+  const myRoomGroupCache = new Map();
+  const myRoomCheckinCache = new Map();
+  const myRoomGroupUnsubs = new Map();
+  const myRoomCheckinUnsubs = new Map();
 
   async function safeRequestNotificationPermission() {
     try {
@@ -116,6 +123,87 @@ document.addEventListener("DOMContentLoaded", () => {
     return plan === "pro" ? 5 : 1;
   }
 
+  function todayStr() {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+
+  function checkinStatusLabel(status) {
+    if (status === "approved") return "인증완료";
+    if (status === "pending") return "검토중";
+    if (status === "rejected") return "반려";
+    return "미제출";
+  }
+
+  function groupStatusLabel(status) {
+    if (status === "active") return "진행중";
+    if (status === "closed") return "종료";
+    return "대기중";
+  }
+
+  function cleanupMyRoomWatchers() {
+    for (const unsub of myRoomGroupUnsubs.values()) unsub();
+    for (const unsub of myRoomCheckinUnsubs.values()) unsub();
+    myRoomGroupUnsubs.clear();
+    myRoomCheckinUnsubs.clear();
+    myRoomGroupCache.clear();
+    myRoomCheckinCache.clear();
+  }
+
+  function syncMyRoomWatchers(joined = [], uid = "") {
+    const wanted = new Set((joined || []).filter((gid) => typeof gid === "string" && gid));
+    const today = todayStr();
+
+    for (const gid of wanted) {
+      if (!myRoomGroupUnsubs.has(gid)) {
+        const unsubGroup = onSnapshot(doc(db, "groups", gid), (snap) => {
+          const data = snap.exists() ? snap.data() : null;
+          myRoomGroupCache.set(gid, data);
+          const title = (data?.title || "").trim();
+          if (title) groupTitleCache.set(gid, title);
+          if (latestLobbyUserData) renderMyRooms(latestLobbyUserData);
+        });
+        myRoomGroupUnsubs.set(gid, unsubGroup);
+      }
+
+      const currentKey = `${gid}_${today}`;
+      const prevKey = myRoomCheckinCache.get(`__key_${gid}`) || "";
+      if (!myRoomCheckinUnsubs.has(gid) || prevKey !== currentKey) {
+        if (myRoomCheckinUnsubs.has(gid)) {
+          const prevUnsub = myRoomCheckinUnsubs.get(gid);
+          if (prevUnsub) prevUnsub();
+        }
+        const checkinId = `${gid}_${uid}_${today}`;
+        const unsubCheckin = onSnapshot(doc(db, "checkins", checkinId), (snap) => {
+          myRoomCheckinCache.set(gid, snap.exists() ? snap.data() : null);
+          if (latestLobbyUserData) renderMyRooms(latestLobbyUserData);
+        });
+        myRoomCheckinUnsubs.set(gid, unsubCheckin);
+        myRoomCheckinCache.set(`__key_${gid}`, currentKey);
+      }
+    }
+
+    for (const gid of [...myRoomGroupUnsubs.keys()]) {
+      if (wanted.has(gid)) continue;
+      const unsub = myRoomGroupUnsubs.get(gid);
+      if (unsub) unsub();
+      myRoomGroupUnsubs.delete(gid);
+      myRoomGroupCache.delete(gid);
+      groupTitleCache.delete(gid);
+    }
+    for (const gid of [...myRoomCheckinUnsubs.keys()]) {
+      if (wanted.has(gid)) continue;
+      const unsub = myRoomCheckinUnsubs.get(gid);
+      if (unsub) unsub();
+      myRoomCheckinUnsubs.delete(gid);
+      myRoomCheckinCache.delete(gid);
+      myRoomCheckinCache.delete(`__key_${gid}`);
+    }
+  }
+
   function setLobbyEnabled(enabled) {
     if (createRoomBtn) createRoomBtn.disabled = !enabled;
     if (roomTitleInput) roomTitleInput.disabled = !enabled;
@@ -145,6 +233,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function renderLobbyState(userData) {
+    latestLobbyUserData = userData || null;
     const inGroup = !!userData.currentGroupId;
     const plan = userData?.plan === "pro" ? "pro" : "free";
     const joined = Array.isArray(userData?.joinedGroupIds)
@@ -165,22 +254,6 @@ document.addEventListener("DOMContentLoaded", () => {
       if (createRoomBtn) createRoomBtn.disabled = atLimit;
       setCreateFormVisible(createFormVisible);
       renderMyRooms(userData);
-    }
-  }
-
-  async function refreshGroupTitle(groupId) {
-    if (!groupId) return;
-    try {
-      const groupSnap = await getDoc(doc(db, "groups", groupId));
-      const title = groupSnap.exists() ? ((groupSnap.data()?.title || "").trim()) : "";
-      groupTitleCache.set(groupId, title);
-      const activeUserData = {
-        currentGroupId: currentUserGroupId,
-        joinedGroupIds: currentUserJoinedGroupIds
-      };
-      renderMyRooms(activeUserData);
-    } catch (err) {
-      console.warn("refreshGroupTitle failed", err);
     }
   }
 
@@ -208,12 +281,18 @@ document.addEventListener("DOMContentLoaded", () => {
       const li = document.createElement("li");
       li.className = "item";
 
-      const title = groupTitleCache.get(groupId) || "방 이름 불러오는 중...";
+      const liveGroup = myRoomGroupCache.get(groupId) || null;
+      const title = (liveGroup?.title || groupTitleCache.get(groupId) || "방 이름 불러오는 중...").trim();
+      const membersCount = Array.isArray(liveGroup?.members) ? liveGroup.members.length : 0;
+      const roomStatus = groupStatusLabel(String(liveGroup?.status || "waiting"));
+      const myCheckin = myRoomCheckinCache.get(groupId) || null;
+      const myCheckinStatus = checkinStatusLabel(String(myCheckin?.status || ""));
       const left = document.createElement("div");
       left.className = "item-left";
       left.innerHTML = `
         <div class="item-name">${title}</div>
         <div class="item-sub">ID ${groupId}</div>
+        <div class="item-sub">${roomStatus} · 인원 ${membersCount}/5 · 내 인증 ${myCheckinStatus}</div>
       `;
 
       const openBtn = document.createElement("button");
@@ -355,6 +434,12 @@ document.addEventListener("DOMContentLoaded", () => {
       if (roomActionBox) roomActionBox.style.display = "none";
       if (myRoomSection) myRoomSection.style.display = "none";
       if (myRoomList) myRoomList.innerHTML = "";
+      latestLobbyUserData = null;
+      if (roomDayTimer) {
+        clearInterval(roomDayTimer);
+        roomDayTimer = null;
+      }
+      cleanupMyRoomWatchers();
       return;
     }
 
@@ -428,13 +513,8 @@ document.addEventListener("DOMContentLoaded", () => {
         : (latest.currentGroupId ? [latest.currentGroupId] : []);
       currentUserPlan = latest.plan === "pro" ? "pro" : "free";
       if (userName) userName.textContent = latest.nickname || user.displayName || "사용자";
+      syncMyRoomWatchers(currentUserJoinedGroupIds, user.uid);
       renderLobbyState(latest);
-      const joinedForTitle = Array.isArray(latest.joinedGroupIds)
-        ? latest.joinedGroupIds.filter((gid) => typeof gid === "string" && gid)
-        : (latest.currentGroupId ? [latest.currentGroupId] : []);
-      for (const gid of joinedForTitle) {
-        refreshGroupTitle(gid);
-      }
     });
 
     currentUserGroupId = myData.currentGroupId || null;
@@ -442,14 +522,18 @@ document.addEventListener("DOMContentLoaded", () => {
       ? myData.joinedGroupIds.filter((gid) => typeof gid === "string" && gid)
       : (myData.currentGroupId ? [myData.currentGroupId] : []);
     currentUserPlan = myData.plan === "pro" ? "pro" : "free";
+    roomDayKey = todayStr();
+    syncMyRoomWatchers(currentUserJoinedGroupIds, user.uid);
+    if (!roomDayTimer) {
+      roomDayTimer = window.setInterval(() => {
+        const next = todayStr();
+        if (next === roomDayKey) return;
+        roomDayKey = next;
+        syncMyRoomWatchers(currentUserJoinedGroupIds, user.uid);
+      }, 5000);
+    }
     updatePasswordFieldVisibility();
     renderLobbyState(myData);
-    const initialJoined = Array.isArray(myData.joinedGroupIds)
-      ? myData.joinedGroupIds.filter((gid) => typeof gid === "string" && gid)
-      : (myData.currentGroupId ? [myData.currentGroupId] : []);
-    for (const gid of initialJoined) {
-      refreshGroupTitle(gid);
-    }
   });
 
   if ("serviceWorker" in navigator) {

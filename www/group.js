@@ -45,6 +45,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const memberWatchers = new Map();
   const memberUserCache = new Map();
   const memberCheckinCache = new Map();
+  const memberStatsCache = new Map();
   let latestUserData = null;
   let latestGroupData = null;
 
@@ -117,6 +118,7 @@ document.addEventListener("DOMContentLoaded", () => {
     memberWatchers.clear();
     memberUserCache.clear();
     memberCheckinCache.clear();
+    memberStatsCache.clear();
   }
 
   function setGroupWatcher(groupId) {
@@ -145,7 +147,12 @@ document.addEventListener("DOMContentLoaded", () => {
         memberCheckinCache.set(uid, snap.exists() ? snap.data() : null);
         scheduleRender();
       });
-      memberWatchers.set(uid, [unsubUser, unsubCheckin]);
+      const statsDocId = `${groupId}_${uid}`;
+      const unsubStats = onSnapshot(doc(db, "groupMemberStats", statsDocId), (snap) => {
+        memberStatsCache.set(uid, snap.exists() ? snap.data() : null);
+        scheduleRender();
+      });
+      memberWatchers.set(uid, [unsubUser, unsubCheckin, unsubStats]);
     }
 
     for (const [uid, unsubs] of memberWatchers.entries()) {
@@ -154,6 +161,7 @@ document.addEventListener("DOMContentLoaded", () => {
       memberWatchers.delete(uid);
       memberUserCache.delete(uid);
       memberCheckinCache.delete(uid);
+      memberStatsCache.delete(uid);
     }
   }
 
@@ -277,9 +285,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
       for (const uid of members) {
         const m = memberUserCache.get(uid) || null;
+        const s = memberStatsCache.get(uid) || null;
         const checkin = memberCheckinCache.get(uid) || null;
         const nickname = m?.nickname || m?.name || "사용자";
-        const streak = m?.currentChallengeStreak || 0;
+        const streak = Number(s?.currentStreak || 0);
         const isMe = uid === currentUser.uid;
 
         let imageURL = null;
@@ -549,20 +558,26 @@ document.addEventListener("DOMContentLoaded", () => {
                 await uploadBytes(storageRef, file);
                 const imageURL = await getDownloadURL(storageRef);
 
-                await updateDoc(todayCheckinRef, {
-                  imageURL,
-                  updatedAt: serverTimestamp(),
-                  status: "pending",
+              await updateDoc(todayCheckinRef, {
+                imageURL,
+                updatedAt: serverTimestamp(),
+                status: "pending",
                   reviewedBy: null,
                   reviewedAt: null,
                   streakCounted: false
-                });
+              });
 
-                if (myTodayData?.streakCounted) {
-                  const latestUserSnap = await getDoc(userRef);
-                  const currentStreak = latestUserSnap.exists() ? (latestUserSnap.data().currentChallengeStreak || 0) : 0;
-                  await updateDoc(userRef, { currentChallengeStreak: Math.max(currentStreak - 1, 0) });
-                }
+              if (myTodayData?.streakCounted) {
+                const statsRef = doc(db, "groupMemberStats", `${currentGroupId}_${currentUser.uid}`);
+                const statsSnap = await getDoc(statsRef);
+                const currentStreak = statsSnap.exists() ? Number(statsSnap.data()?.currentStreak || 0) : 0;
+                await setDoc(statsRef, {
+                  groupId: currentGroupId,
+                  uid: currentUser.uid,
+                  currentStreak: Math.max(currentStreak - 1, 0),
+                  updatedAt: serverTimestamp()
+                }, { merge: true });
+              }
 
                 alert("오늘 인증 사진이 재제출되었습니다. 방장 승인 후 반영됩니다.");
                 return;
@@ -580,9 +595,15 @@ document.addEventListener("DOMContentLoaded", () => {
               await deleteDoc(todayCheckinRef);
 
               if (myTodayData?.streakCounted) {
-                const latestUserSnap = await getDoc(userRef);
-                const currentStreak = latestUserSnap.exists() ? (latestUserSnap.data().currentChallengeStreak || 0) : 0;
-                await updateDoc(userRef, { currentChallengeStreak: Math.max(currentStreak - 1, 0) });
+                const statsRef = doc(db, "groupMemberStats", `${currentGroupId}_${currentUser.uid}`);
+                const statsSnap = await getDoc(statsRef);
+                const currentStreak = statsSnap.exists() ? Number(statsSnap.data()?.currentStreak || 0) : 0;
+                await setDoc(statsRef, {
+                  groupId: currentGroupId,
+                  uid: currentUser.uid,
+                  currentStreak: Math.max(currentStreak - 1, 0),
+                  updatedAt: serverTimestamp()
+                }, { merge: true });
               }
 
               alert("오늘 인증이 취소되었습니다.");
