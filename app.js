@@ -69,6 +69,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let latestLobbyUserData = null;
   let roomDayKey = "";
   let roomDayTimer = null;
+  let restrictionHandled = false;
   const groupTitleCache = new Map();
   const myRoomGroupCache = new Map();
   const myRoomCheckinCache = new Map();
@@ -121,6 +122,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function maxGroupsForPlan(plan) {
     return plan === "pro" ? 5 : 1;
+  }
+
+  function isRestrictedUser(data = {}) {
+    if (data?.banned === true || data?.moderationStatus === "banned") return true;
+    const until = data?.suspendedUntil;
+    const untilMs = typeof until?.toMillis === "function" ? until.toMillis() : (until ? new Date(until).getTime() : 0);
+    return Number.isFinite(untilMs) && untilMs > Date.now();
+  }
+
+  function restrictedMessage(data = {}) {
+    if (data?.banned === true || data?.moderationStatus === "banned") {
+      return "운영자에 의해 계정이 차단되었습니다.";
+    }
+    return "계정이 일시 정지 상태입니다.";
   }
 
   function todayStr() {
@@ -419,6 +434,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   onAuthStateChanged(auth, async (user) => {
     if (!user) {
+      restrictionHandled = false;
       if (userDocUnsub) {
         userDocUnsub();
         userDocUnsub = null;
@@ -483,6 +499,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const myData = userSnap.data();
+    if (isRestrictedUser(myData)) {
+      if (!restrictionHandled) {
+        restrictionHandled = true;
+        alert(restrictedMessage(myData));
+      }
+      await signOut(auth);
+      return;
+    }
 
     if (loginRow) loginRow.style.display = "none";
     if (loginBtn) loginBtn.style.display = "none";
@@ -512,6 +536,14 @@ document.addEventListener("DOMContentLoaded", () => {
         ? latest.joinedGroupIds.filter((gid) => typeof gid === "string" && gid)
         : (latest.currentGroupId ? [latest.currentGroupId] : []);
       currentUserPlan = latest.plan === "pro" ? "pro" : "free";
+      if (isRestrictedUser(latest)) {
+        if (!restrictionHandled) {
+          restrictionHandled = true;
+          alert(restrictedMessage(latest));
+        }
+        signOut(auth);
+        return;
+      }
       if (userName) userName.textContent = latest.nickname || user.displayName || "사용자";
       syncMyRoomWatchers(currentUserJoinedGroupIds, user.uid);
       renderLobbyState(latest);

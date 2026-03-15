@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, serverTimestamp, updateDoc, deleteDoc, runTransaction, onSnapshot, collection, addDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
@@ -54,6 +54,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let renderQueued = false;
   let todayKey = "";
   let checkinActionBusy = false;
+  let restrictionHandled = false;
 
   function normalizeJoinedGroupIds(userData = {}) {
     const raw = Array.isArray(userData?.joinedGroupIds) ? userData.joinedGroupIds : [];
@@ -65,6 +66,18 @@ document.addEventListener("DOMContentLoaded", () => {
     const current = typeof userData?.currentGroupId === "string" ? userData.currentGroupId : "";
     if (current && !out.includes(current)) out.push(current);
     return out;
+  }
+
+  function isRestrictedUser(data = {}) {
+    if (data?.banned === true || data?.moderationStatus === "banned") return true;
+    const until = data?.suspendedUntil;
+    const untilMs = typeof until?.toMillis === "function" ? until.toMillis() : (until ? new Date(until).getTime() : 0);
+    return Number.isFinite(untilMs) && untilMs > Date.now();
+  }
+
+  function restrictedMessage(data = {}) {
+    if (data?.banned === true || data?.moderationStatus === "banned") return "운영자에 의해 계정이 차단되었습니다.";
+    return "계정이 일시 정지 상태입니다.";
   }
 
   function extractFunctionErrorMessage(err, fallback) {
@@ -330,6 +343,75 @@ document.addEventListener("DOMContentLoaded", () => {
           '<div class="item-streak">🔥 ' + streak + '일 연속</div>' +
           "</div>" +
           '<div class="badge ' + markClass + '">' + markText + "</div>";
+
+        if (!isMe) {
+          const nameEl = li.querySelector(".item-name");
+          if (nameEl) {
+            nameEl.style.display = "flex";
+            nameEl.style.alignItems = "center";
+            nameEl.style.gap = "6px";
+
+            const reportBtn = document.createElement("button");
+            reportBtn.className = "btn compact ghost";
+            reportBtn.style.padding = "2px 8px";
+            reportBtn.style.fontSize = "12px";
+            reportBtn.textContent = "신고";
+
+            const blockBtn = document.createElement("button");
+            blockBtn.className = "btn compact ghost";
+            blockBtn.style.padding = "2px 8px";
+            blockBtn.style.fontSize = "12px";
+            blockBtn.textContent = "차단";
+
+            reportBtn.onclick = async (e) => {
+              e.stopPropagation();
+              const reason = (prompt("신고 사유를 입력해 주세요. (최대 500자)") || "").trim();
+              if (!reason) return;
+              const blockAlso = confirm("동시에 이 사용자를 차단할까요?");
+              reportBtn.disabled = true;
+              blockBtn.disabled = true;
+              try {
+                const reportFn = httpsCallable(functions, "reportUser");
+                await reportFn({
+                  groupId: currentGroupId,
+                  targetUid: uid,
+                  reason,
+                  blockAlso
+                });
+                alert(blockAlso ? "신고 및 차단이 완료되었습니다." : "신고가 접수되었습니다.");
+              } catch (err) {
+                console.error("reportUser failed", err);
+                await logClientError("reportUser_failed", err, { groupId: currentGroupId, targetUid: uid });
+                alert(extractFunctionErrorMessage(err, "신고 처리 중 오류가 발생했습니다."));
+              } finally {
+                reportBtn.disabled = false;
+                blockBtn.disabled = false;
+              }
+            };
+
+            blockBtn.onclick = async (e) => {
+              e.stopPropagation();
+              if (!confirm("이 사용자를 차단할까요?")) return;
+              reportBtn.disabled = true;
+              blockBtn.disabled = true;
+              try {
+                const blockFn = httpsCallable(functions, "blockUser");
+                await blockFn({ targetUid: uid });
+                alert("차단되었습니다. 이후 같은 방 입장이 제한됩니다.");
+              } catch (err) {
+                console.error("blockUser failed", err);
+                await logClientError("blockUser_failed", err, { groupId: currentGroupId, targetUid: uid });
+                alert(extractFunctionErrorMessage(err, "차단 처리 중 오류가 발생했습니다."));
+              } finally {
+                reportBtn.disabled = false;
+                blockBtn.disabled = false;
+              }
+            };
+
+            nameEl.appendChild(reportBtn);
+            nameEl.appendChild(blockBtn);
+          }
+        }
 
         if (imageURL) {
           li.style.cursor = "pointer";
@@ -701,6 +783,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   onAuthStateChanged(auth, async (user) => {
     if (!user) {
+      restrictionHandled = false;
       location.href = "/";
       return;
     }
@@ -729,6 +812,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const myData = userSnap.data();
+    if (isRestrictedUser(myData)) {
+      if (!restrictionHandled) {
+        restrictionHandled = true;
+        alert(restrictedMessage(myData));
+      }
+      await signOut(auth);
+      return;
+    }
     const joined = normalizeJoinedGroupIds(myData);
     if (!joined.length) {
       statusEl.textContent = "현재 참여 중인 그룹이 없습니다.";
@@ -747,6 +838,14 @@ document.addEventListener("DOMContentLoaded", () => {
     userUnsub = onSnapshot(userRef, (snap) => {
       if (!snap.exists()) return;
       const latest = snap.data();
+      if (isRestrictedUser(latest)) {
+        if (!restrictionHandled) {
+          restrictionHandled = true;
+          alert(restrictedMessage(latest));
+        }
+        signOut(auth);
+        return;
+      }
       latestUserData = latest;
       const latestJoined = normalizeJoinedGroupIds(latest);
       if (!latestJoined.length) {

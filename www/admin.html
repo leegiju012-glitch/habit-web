@@ -16,6 +16,7 @@
         <button class="btn ghost compact" id="backProfileBtn">프로필로 돌아가기</button>
         <button class="btn ghost compact" id="backLobbyBtn">로비로 돌아가기</button>
         <button class="btn compact" id="runCleanupBtn">데이터 정리 실행</button>
+        <button class="btn compact" id="runBackfillBtn">백필 실행</button>
       </div>
 
       <div class="list" style="margin-top:12px;">
@@ -43,14 +44,29 @@
       </div>
 
       <div class="panel-block">
+        <p class="section-title">신고 목록(최대 30개)</p>
+        <ul class="list" id="reportList"></ul>
+      </div>
+
+      <div class="panel-block">
+        <p class="section-title">제재 사용자 목록</p>
+        <ul class="list" id="moderatedUserList"></ul>
+      </div>
+
+      <div class="panel-block">
         <p class="section-title">최근 정리 결과</p>
         <div class="pill" id="cleanupResult">아직 실행 전</div>
+      </div>
+
+      <div class="panel-block">
+        <p class="section-title">최근 백필 결과</p>
+        <div class="pill" id="backfillResult">아직 실행 전</div>
       </div>
 
       <p class="notice">지표는 화면 진입 시점 기준으로 집계됩니다.</p>
     </div>
   </div>
 
-  <script type="module" src="admin.js?v=20260313c"></script>
+  <script type="module" src="admin.js?v=20260315d"></script>
 </body>
 </html>

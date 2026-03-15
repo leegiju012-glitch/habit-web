@@ -3,7 +3,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { initializeApp } from "firebase-admin/app";
-import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
+import { getFirestore, FieldValue, Timestamp, FieldPath } from "firebase-admin/firestore";
 import { getMessaging } from "firebase-admin/messaging";
 
 initializeApp();
@@ -31,12 +31,40 @@ function normalizeJoinedGroupIds(userData = {}) {
   if (current && !out.includes(current)) out.push(current);
   return out;
 }
+
+function normalizeBlockedUids(userData = {}) {
+  const raw = Array.isArray(userData.blockedUids) ? userData.blockedUids : [];
+  const out = [];
+  for (const uid of raw) {
+    if (typeof uid !== "string" || !uid.trim()) continue;
+    if (!out.includes(uid)) out.push(uid);
+  }
+  return out;
+}
 function requireAuth(request) {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new HttpsError("unauthenticated", "로그인이 필요합니다.");
   }
   return uid;
+}
+
+function toMillisSafe(value) {
+  if (!value) return 0;
+  if (typeof value?.toMillis === "function") return value.toMillis();
+  const d = new Date(value);
+  const t = d.getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+function assertUserAllowed(userData = {}) {
+  if (userData?.banned === true || userData?.moderationStatus === "banned") {
+    throw new HttpsError("permission-denied", "운영자에 의해 영구 차단된 계정입니다.");
+  }
+  const untilMs = toMillisSafe(userData?.suspendedUntil);
+  if (untilMs > Date.now()) {
+    throw new HttpsError("permission-denied", "계정이 일시 정지 상태입니다. 일정 시간 후 다시 시도해 주세요.");
+  }
 }
 
 function hashPassword(password, saltHex) {
@@ -110,6 +138,8 @@ function mapError(err) {
       return new HttpsError("permission-denied", "관리자만 실행할 수 있습니다.");
     case "NOT_MEMBER":
       return new HttpsError("permission-denied", "방 멤버만 처리할 수 있습니다.");
+    case "BLOCKED_MEMBER":
+      return new HttpsError("permission-denied", "차단 관계가 있는 사용자와는 같은 방에 참여할 수 없습니다.");
     default:
       console.error("Unhandled function error:", err);
       return new HttpsError("internal", "서버 내부 오류가 발생했습니다.");
@@ -227,8 +257,10 @@ export const createRoom = onCall(fnOptions, async (request) => {
     await db.runTransaction(async (tx) => {
       const userSnap = await tx.get(userRef);
       const userData = userSnap.exists ? userSnap.data() : {};
+      assertUserAllowed(userData);
       const plan = normalizePlan(userData?.plan);
       const joined = normalizeJoinedGroupIds(userData);
+      const myBlocked = normalizeBlockedUids(userData);
       const maxGroups = maxGroupsByPlan(plan);
       if (joined.length >= maxGroups) throw new Error("PLAN_LIMIT");
 
@@ -407,6 +439,7 @@ export const joinRoom = onCall(fnOptions, async (request) => {
     await db.runTransaction(async (tx) => {
       const userSnap = await tx.get(userRef);
       const userData = userSnap.exists ? userSnap.data() : {};
+      assertUserAllowed(userData);
       const plan = normalizePlan(userData?.plan);
       const joined = normalizeJoinedGroupIds(userData);
       const maxGroups = maxGroupsByPlan(plan);
@@ -445,6 +478,19 @@ export const joinRoom = onCall(fnOptions, async (request) => {
 
       if (!members.includes(uid) && members.length >= 5) {
         throw new Error("ROOM_FULL");
+      }
+
+      for (const memberUid of members) {
+        if (memberUid === uid) continue;
+        if (myBlocked.includes(memberUid)) {
+          throw new Error("BLOCKED_MEMBER");
+        }
+        const memberSnap = await tx.get(db.collection("users").doc(memberUid));
+        const memberData = memberSnap.exists ? memberSnap.data() : {};
+        const memberBlocked = normalizeBlockedUids(memberData);
+        if (memberBlocked.includes(uid)) {
+          throw new Error("BLOCKED_MEMBER");
+        }
       }
 
       if ((group.visibility || "public") === "private") {
@@ -508,6 +554,7 @@ export const switchActiveGroup = onCall(fnOptions, async (request) => {
       if (!members.includes(uid)) throw new Error("NOT_MEMBER");
 
       const userData = userSnap.exists ? userSnap.data() : {};
+      assertUserAllowed(userData);
       const joined = normalizeJoinedGroupIds(userData);
       const nextJoined = joined.includes(groupId) ? joined : [...joined, groupId];
       const plan = normalizePlan(userData?.plan);
@@ -534,6 +581,289 @@ export const switchActiveGroup = onCall(fnOptions, async (request) => {
       groupId: request.data?.groupId || null,
       err
     });
+    throw mapError(err);
+  }
+});
+
+export const reportUser = onCall(fnOptions, async (request) => {
+  try {
+    const reporterUid = requireAuth(request);
+    const groupId = String(request.data?.groupId || "").trim();
+    const targetUid = String(request.data?.targetUid || "").trim();
+    const reason = String(request.data?.reason || "").trim().slice(0, 500);
+    const blockAlso = request.data?.blockAlso === true;
+
+    if (!groupId || !targetUid || !reason) {
+      throw new HttpsError("invalid-argument", "groupId, targetUid, reason이 필요합니다.");
+    }
+    if (reporterUid === targetUid) {
+      throw new HttpsError("invalid-argument", "본인은 신고할 수 없습니다.");
+    }
+
+    const groupRef = db.collection("groups").doc(groupId);
+    const reporterRef = db.collection("users").doc(reporterUid);
+    const targetRef = db.collection("users").doc(targetUid);
+    const reportRef = db.collection("reports").doc();
+
+    await db.runTransaction(async (tx) => {
+      const [groupSnap, reporterSnap, targetSnap] = await Promise.all([
+        tx.get(groupRef),
+        tx.get(reporterRef),
+        tx.get(targetRef)
+      ]);
+      if (!groupSnap.exists) throw new Error("ROOM_NOT_FOUND");
+      if (!targetSnap.exists) throw new Error("NOT_MEMBER");
+
+      const group = groupSnap.data();
+      const members = Array.isArray(group.members) ? group.members : [];
+      if (!members.includes(reporterUid) || !members.includes(targetUid)) {
+        throw new Error("NOT_MEMBER");
+      }
+
+      tx.set(reportRef, {
+        groupId,
+        reporterUid,
+        targetUid,
+        reason,
+        status: "open",
+        createdAt: FieldValue.serverTimestamp()
+      });
+
+      if (blockAlso) {
+        const reporterData = reporterSnap.exists ? reporterSnap.data() : {};
+        const blocked = normalizeBlockedUids(reporterData);
+        if (!blocked.includes(targetUid)) blocked.push(targetUid);
+        tx.set(reporterRef, { blockedUids: blocked }, { merge: true });
+      }
+    });
+
+    return { ok: true };
+  } catch (err) {
+    console.error("reportUser failed", {
+      uid: request.auth?.uid || null,
+      groupId: request.data?.groupId || null,
+      targetUid: request.data?.targetUid || null,
+      err
+    });
+    throw mapError(err);
+  }
+});
+
+export const blockUser = onCall(fnOptions, async (request) => {
+  try {
+    const uid = requireAuth(request);
+    const targetUid = String(request.data?.targetUid || "").trim();
+    if (!targetUid) throw new HttpsError("invalid-argument", "targetUid가 필요합니다.");
+    if (uid === targetUid) throw new HttpsError("invalid-argument", "본인은 차단할 수 없습니다.");
+
+    const userRef = db.collection("users").doc(uid);
+    const targetRef = db.collection("users").doc(targetUid);
+    await db.runTransaction(async (tx) => {
+      const [userSnap, targetSnap] = await Promise.all([tx.get(userRef), tx.get(targetRef)]);
+      if (!targetSnap.exists) throw new Error("NOT_MEMBER");
+      const userData = userSnap.exists ? userSnap.data() : {};
+      const blocked = normalizeBlockedUids(userData);
+      if (!blocked.includes(targetUid)) blocked.push(targetUid);
+      tx.set(userRef, { blockedUids: blocked }, { merge: true });
+    });
+
+    return { ok: true, targetUid };
+  } catch (err) {
+    console.error("blockUser failed", {
+      uid: request.auth?.uid || null,
+      targetUid: request.data?.targetUid || null,
+      err
+    });
+    throw mapError(err);
+  }
+});
+
+export const unblockUser = onCall(fnOptions, async (request) => {
+  try {
+    const uid = requireAuth(request);
+    const targetUid = String(request.data?.targetUid || "").trim();
+    if (!targetUid) throw new HttpsError("invalid-argument", "targetUid가 필요합니다.");
+
+    const userRef = db.collection("users").doc(uid);
+    await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      const userData = userSnap.exists ? userSnap.data() : {};
+      const blocked = normalizeBlockedUids(userData).filter((id) => id !== targetUid);
+      tx.set(userRef, { blockedUids: blocked }, { merge: true });
+    });
+    return { ok: true, targetUid };
+  } catch (err) {
+    console.error("unblockUser failed", {
+      uid: request.auth?.uid || null,
+      targetUid: request.data?.targetUid || null,
+      err
+    });
+    throw mapError(err);
+  }
+});
+
+export const reviewReport = onCall(fnOptions, async (request) => {
+  try {
+    const reviewerUid = requireAdmin(request);
+    const reportId = String(request.data?.reportId || "").trim();
+    const decision = String(request.data?.decision || "").trim(); // resolved | dismissed
+    const note = String(request.data?.note || "").trim().slice(0, 500);
+    if (!reportId) throw new HttpsError("invalid-argument", "reportId가 필요합니다.");
+    if (decision !== "resolved" && decision !== "dismissed") {
+      throw new HttpsError("invalid-argument", "decision은 resolved 또는 dismissed여야 합니다.");
+    }
+
+    const reportRef = db.collection("reports").doc(reportId);
+    await db.runTransaction(async (tx) => {
+      const reportSnap = await tx.get(reportRef);
+      if (!reportSnap.exists) throw new HttpsError("not-found", "신고 내역을 찾을 수 없습니다.");
+      tx.set(reportRef, {
+        status: decision,
+        reviewedBy: reviewerUid,
+        reviewedAt: FieldValue.serverTimestamp(),
+        reviewNote: note || null
+      }, { merge: true });
+    });
+    return { ok: true, reportId, decision };
+  } catch (err) {
+    console.error("reviewReport failed", { uid: request.auth?.uid || null, err });
+    throw mapError(err);
+  }
+});
+
+export const moderateUser = onCall(fnOptions, async (request) => {
+  try {
+    const moderatorUid = requireAdmin(request);
+    const targetUid = String(request.data?.targetUid || "").trim();
+    const action = String(request.data?.action || "").trim(); // suspend7d | ban
+    const reason = String(request.data?.reason || "").trim().slice(0, 500);
+    if (!targetUid) throw new HttpsError("invalid-argument", "targetUid가 필요합니다.");
+    if (action !== "suspend7d" && action !== "ban") {
+      throw new HttpsError("invalid-argument", "action은 suspend7d 또는 ban이어야 합니다.");
+    }
+
+    const payload = {
+      moderatedBy: moderatorUid,
+      moderatedAt: FieldValue.serverTimestamp(),
+      moderationReason: reason || null
+    };
+    if (action === "suspend7d") {
+      const until = new Date();
+      until.setDate(until.getDate() + 7);
+      Object.assign(payload, {
+        moderationStatus: "suspended",
+        suspendedUntil: Timestamp.fromDate(until),
+        banned: false
+      });
+    } else {
+      Object.assign(payload, {
+        moderationStatus: "banned",
+        suspendedUntil: null,
+        banned: true
+      });
+    }
+
+    const groupSnap = await db.collection("groups").where("members", "array-contains", targetUid).limit(200).get();
+    for (const groupDoc of groupSnap.docs) {
+      await db.runTransaction(async (tx) => {
+        const latestGroupSnap = await tx.get(groupDoc.ref);
+        if (!latestGroupSnap.exists) return;
+        const group = latestGroupSnap.data();
+        const members = Array.isArray(group.members) ? group.members : [];
+        if (!members.includes(targetUid)) return;
+
+        // 규칙:
+        // - 2명 방에서 1명 제재 시 방 해산
+        // - 3명 이상 방에서 제재 시 대상만 퇴출
+        if (members.length <= 2) {
+          const memberRefs = members.map((memberUid) => db.collection("users").doc(memberUid));
+          const memberSnaps = await Promise.all(memberRefs.map((ref) => tx.get(ref)));
+          const memberByUid = new Map(memberSnaps.map((snap) => [snap.ref.id, snap]));
+          for (const memberUid of members) {
+            const memberRef = db.collection("users").doc(memberUid);
+            const memberSnap = memberByUid.get(memberUid);
+            const memberData = memberSnap?.exists ? memberSnap.data() : {};
+            const joined = normalizeJoinedGroupIds(memberData);
+            const nextJoined = joined.filter((gid) => gid !== groupDoc.id);
+            const current = memberData?.currentGroupId || null;
+            const nextCurrent = current === groupDoc.id ? (nextJoined.length > 0 ? nextJoined[0] : null) : current;
+            tx.set(
+              memberRef,
+              {
+                currentGroupId: nextCurrent,
+                currentGroupInviteCode: null,
+                joinedGroupIds: nextJoined
+              },
+              { merge: true }
+            );
+          }
+
+          tx.update(groupDoc.ref, {
+            status: "closed",
+            closedAt: FieldValue.serverTimestamp(),
+            members: [],
+            dissolveVotes: []
+          });
+          tx.delete(db.collection("groupSecrets").doc(groupDoc.id));
+          return;
+        }
+
+        const nextMembers = members.filter((uid) => uid !== targetUid);
+        const ownerUid = group.ownerUid || members[0] || null;
+        const nextOwnerUid = ownerUid === targetUid ? nextMembers[0] : ownerUid;
+        tx.update(groupDoc.ref, {
+          members: nextMembers,
+          ownerUid: nextOwnerUid
+        });
+      });
+    }
+
+    const userRef = db.collection("users").doc(targetUid);
+    await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      const userData = userSnap.exists ? userSnap.data() : {};
+      tx.set(
+        userRef,
+        {
+          ...payload,
+          currentGroupId: null,
+          currentGroupInviteCode: null,
+          joinedGroupIds: []
+        },
+        { merge: true }
+      );
+      if (userData?.fcmToken) {
+        tx.set(userRef, { fcmToken: null }, { merge: true });
+      }
+      tx.delete(db.collection("queue").doc(targetUid));
+    });
+    return { ok: true, targetUid, action };
+  } catch (err) {
+    console.error("moderateUser failed", { uid: request.auth?.uid || null, err });
+    throw mapError(err);
+  }
+});
+
+export const liftModeration = onCall(fnOptions, async (request) => {
+  try {
+    const moderatorUid = requireAdmin(request);
+    const targetUid = String(request.data?.targetUid || "").trim();
+    if (!targetUid) throw new HttpsError("invalid-argument", "targetUid가 필요합니다.");
+
+    await db.collection("users").doc(targetUid).set(
+      {
+        moderatedBy: moderatorUid,
+        moderatedAt: FieldValue.serverTimestamp(),
+        moderationStatus: "active",
+        moderationReason: null,
+        suspendedUntil: null,
+        banned: false
+      },
+      { merge: true }
+    );
+    return { ok: true, targetUid };
+  } catch (err) {
+    console.error("liftModeration failed", { uid: request.auth?.uid || null, err });
     throw mapError(err);
   }
 });
@@ -1026,6 +1356,118 @@ export const runMaintenanceCleanup = onCall(fnOptions, async (request) => {
     console.error("runMaintenanceCleanup failed", {
       uid: request.auth?.uid || null,
       email: request.auth?.token?.email || null,
+      err
+    });
+    throw mapError(err);
+  }
+});
+
+export const backfillGroupMemberStats = onCall(fnOptions, async (request) => {
+  try {
+    requireAdmin(request);
+    const onlyGroupId = String(request.data?.groupId || "").trim();
+    const dryRun = request.data?.dryRun === true;
+    const today = new Date().toISOString().slice(0, 10);
+
+    const approvedByKey = new Map(); // key -> { groupId, uid, dates:Set<date> }
+    let scanned = 0;
+    let lastDoc = null;
+
+    while (true) {
+      let q = db.collection("checkins").orderBy(FieldPath.documentId()).limit(500);
+      if (lastDoc) q = q.startAfter(lastDoc.id);
+      const snap = await q.get();
+      if (snap.empty) break;
+
+      for (const docSnap of snap.docs) {
+        scanned += 1;
+        const data = docSnap.data();
+        if ((data?.status || "") !== "approved") continue;
+        const groupId = String(data?.groupId || "").trim();
+        const uid = String(data?.uid || "").trim();
+        const date = String(data?.date || "").trim();
+        if (!groupId || !uid || !date) continue;
+        if (onlyGroupId && groupId !== onlyGroupId) continue;
+        const key = `${groupId}_${uid}`;
+        if (!approvedByKey.has(key)) {
+          approvedByKey.set(key, { groupId, uid, dates: new Set() });
+        }
+        approvedByKey.get(key).dates.add(date);
+      }
+
+      lastDoc = snap.docs[snap.docs.length - 1];
+    }
+
+    let writes = 0;
+    let batch = db.batch();
+    let batchOps = 0;
+
+    for (const [, value] of approvedByKey.entries()) {
+      const groupId = value.groupId;
+      const uid = value.uid;
+      const dates = [...value.dates].sort();
+
+      let bestStreak = 0;
+      let run = 0;
+      let prev = "";
+      for (const d of dates) {
+        if (!prev) run = 1;
+        else run = yesterdayStr(d) === prev ? run + 1 : 1;
+        prev = d;
+        if (run > bestStreak) bestStreak = run;
+      }
+
+      let currentStreak = 0;
+      if (dates.length > 0) {
+        const last = dates[dates.length - 1];
+        if (last === today || last === yesterdayStr(today)) {
+          currentStreak = 1;
+          let cursor = last;
+          for (let i = dates.length - 2; i >= 0; i--) {
+            const expected = yesterdayStr(cursor);
+            if (dates[i] !== expected) break;
+            currentStreak += 1;
+            cursor = dates[i];
+          }
+        }
+      }
+
+      if (!dryRun) {
+        batch.set(groupMemberStatsRef(groupId, uid), {
+          groupId,
+          uid,
+          currentStreak,
+          bestStreak,
+          lastApprovedDate: dates.length ? dates[dates.length - 1] : null,
+          backfilledAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+        batchOps += 1;
+
+        if (batchOps >= 400) {
+          await batch.commit();
+          writes += batchOps;
+          batch = db.batch();
+          batchOps = 0;
+        }
+      }
+    }
+
+    if (!dryRun && batchOps > 0) {
+      await batch.commit();
+      writes += batchOps;
+    }
+
+    return {
+      ok: true,
+      scanned,
+      memberStatsTargets: approvedByKey.size,
+      writes: dryRun ? 0 : writes,
+      dryRun
+    };
+  } catch (err) {
+    console.error("backfillGroupMemberStats failed", {
+      uid: request.auth?.uid || null,
       err
     });
     throw mapError(err);

@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, query, where, getCountFromServer, getDocs, limit, orderBy, Timestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, query, where, getCountFromServer, getDocs, limit, orderBy, Timestamp, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -31,8 +31,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const roomList = document.getElementById("roomList");
   const errorList = document.getElementById("errorList");
   const errorUserList = document.getElementById("errorUserList");
+  const reportList = document.getElementById("reportList");
+  const moderatedUserList = document.getElementById("moderatedUserList");
   const runCleanupBtn = document.getElementById("runCleanupBtn");
+  const runBackfillBtn = document.getElementById("runBackfillBtn");
   const cleanupResult = document.getElementById("cleanupResult");
+  const backfillResult = document.getElementById("backfillResult");
+  let restrictionHandled = false;
 
   backProfileBtn.onclick = () => { location.href = "/profile.html"; };
   backLobbyBtn.onclick = () => { location.href = "/index.html"; };
@@ -45,10 +50,227 @@ document.addEventListener("DOMContentLoaded", () => {
     return `${y}-${m}-${d}`;
   }
 
+  function isRestrictedUser(data = {}) {
+    if (data?.banned === true || data?.moderationStatus === "banned") return true;
+    const until = data?.suspendedUntil;
+    const untilMs = typeof until?.toMillis === "function" ? until.toMillis() : (until ? new Date(until).getTime() : 0);
+    return Number.isFinite(untilMs) && untilMs > Date.now();
+  }
+
+  function restrictedMessage(data = {}) {
+    if (data?.banned === true || data?.moderationStatus === "banned") return "운영자에 의해 계정이 차단되었습니다.";
+    return "계정이 일시 정지 상태입니다.";
+  }
+
+  async function renderReports() {
+    if (!reportList) return;
+    const reportSnap = await getDocs(query(collection(db, "reports"), orderBy("createdAt", "desc"), limit(30)));
+    reportList.innerHTML = "";
+
+    if (reportSnap.empty) {
+      const li = document.createElement("li");
+      li.className = "item";
+      li.innerHTML = '<div class="item-left"><div class="item-name">신고 없음</div><div class="item-sub">최근 신고가 없습니다.</div></div>';
+      reportList.appendChild(li);
+      return;
+    }
+
+    for (const d of reportSnap.docs) {
+      const r = d.data();
+      const created = r.createdAt?.toDate ? r.createdAt.toDate().toLocaleString("ko-KR") : "-";
+      const status = String(r.status || "open");
+      const li = document.createElement("li");
+      li.className = "item";
+
+      const left = document.createElement("div");
+      left.className = "item-left";
+      left.innerHTML =
+        `<div class="item-name">${status === "open" ? "처리대기" : status}</div>` +
+        `<div class="item-sub">방 ${r.groupId || "-"} · 신고자 ${r.reporterUid || "-"} · 대상 ${r.targetUid || "-"}</div>` +
+        `<div class="item-sub">${r.reason || "-"}</div>` +
+        `<div class="item-sub">${created}</div>`;
+
+      const actions = document.createElement("div");
+      actions.style.display = "flex";
+      actions.style.gap = "6px";
+      actions.style.flexWrap = "wrap";
+
+      const doneBtn = document.createElement("button");
+      doneBtn.className = "btn ghost compact";
+      doneBtn.textContent = "처리 완료";
+
+      const dismissBtn = document.createElement("button");
+      dismissBtn.className = "btn ghost compact";
+      dismissBtn.textContent = "기각";
+
+      const suspendBtn = document.createElement("button");
+      suspendBtn.className = "btn ghost compact";
+      suspendBtn.textContent = "7일 정지";
+
+      const banBtn = document.createElement("button");
+      banBtn.className = "btn ghost compact";
+      banBtn.textContent = "영구 차단";
+
+      const setAllDisabled = (disabled) => {
+        doneBtn.disabled = disabled;
+        dismissBtn.disabled = disabled;
+        suspendBtn.disabled = disabled;
+        banBtn.disabled = disabled;
+      };
+
+      doneBtn.onclick = async () => {
+        setAllDisabled(true);
+        try {
+          const fn = httpsCallable(functions, "reviewReport");
+          await fn({ reportId: d.id, decision: "resolved" });
+          await renderReports();
+        } catch (err) {
+          console.error("reviewReport resolved failed", err);
+          alert(typeof err?.details === "string" ? err.details : "신고 처리 중 오류가 발생했습니다.");
+        } finally {
+          setAllDisabled(false);
+        }
+      };
+
+      dismissBtn.onclick = async () => {
+        setAllDisabled(true);
+        try {
+          const fn = httpsCallable(functions, "reviewReport");
+          await fn({ reportId: d.id, decision: "dismissed" });
+          await renderReports();
+        } catch (err) {
+          console.error("reviewReport dismissed failed", err);
+          alert(typeof err?.details === "string" ? err.details : "신고 기각 중 오류가 발생했습니다.");
+        } finally {
+          setAllDisabled(false);
+        }
+      };
+
+      suspendBtn.onclick = async () => {
+        if (!confirm("대상 사용자를 7일 정지할까요?")) return;
+        setAllDisabled(true);
+        try {
+          const reason = (prompt("정지 사유(선택)") || "").trim();
+          const moderate = httpsCallable(functions, "moderateUser");
+          await moderate({ targetUid: r.targetUid, action: "suspend7d", reason });
+          alert("7일 정지가 적용되었습니다.");
+          await renderModeratedUsers();
+        } catch (err) {
+          console.error("moderateUser suspend failed", err);
+          alert(typeof err?.details === "string" ? err.details : "정지 처리 중 오류가 발생했습니다.");
+        } finally {
+          setAllDisabled(false);
+        }
+      };
+
+      banBtn.onclick = async () => {
+        if (!confirm("대상 사용자를 영구 차단할까요?")) return;
+        setAllDisabled(true);
+        try {
+          const reason = (prompt("차단 사유(선택)") || "").trim();
+          const moderate = httpsCallable(functions, "moderateUser");
+          await moderate({ targetUid: r.targetUid, action: "ban", reason });
+          alert("영구 차단이 적용되었습니다.");
+          await renderModeratedUsers();
+        } catch (err) {
+          console.error("moderateUser ban failed", err);
+          alert(typeof err?.details === "string" ? err.details : "차단 처리 중 오류가 발생했습니다.");
+        } finally {
+          setAllDisabled(false);
+        }
+      };
+
+      actions.appendChild(doneBtn);
+      actions.appendChild(dismissBtn);
+      actions.appendChild(suspendBtn);
+      actions.appendChild(banBtn);
+      li.appendChild(left);
+      li.appendChild(actions);
+      reportList.appendChild(li);
+    }
+  }
+
+  function formatTs(value) {
+    if (!value) return "-";
+    if (typeof value?.toDate === "function") return value.toDate().toLocaleString("ko-KR");
+    const d = new Date(value);
+    return Number.isFinite(d.getTime()) ? d.toLocaleString("ko-KR") : "-";
+  }
+
+  async function renderModeratedUsers() {
+    if (!moderatedUserList) return;
+    moderatedUserList.innerHTML = "";
+    const suspendedSnap = await getDocs(
+      query(collection(db, "users"), where("moderationStatus", "in", ["suspended", "banned"]), limit(50))
+    );
+
+    if (suspendedSnap.empty) {
+      const li = document.createElement("li");
+      li.className = "item";
+      li.innerHTML = '<div class="item-left"><div class="item-name">제재 사용자 없음</div></div>';
+      moderatedUserList.appendChild(li);
+      return;
+    }
+
+    suspendedSnap.docs.forEach((d) => {
+      const u = d.data();
+      const li = document.createElement("li");
+      li.className = "item";
+      const status = String(u.moderationStatus || (u.banned ? "banned" : "active"));
+      const until = formatTs(u.suspendedUntil);
+      const name = String(u.nickname || u.name || d.id);
+
+      const left = document.createElement("div");
+      left.className = "item-left";
+      left.innerHTML =
+        `<div class="item-name">${name}</div>` +
+        `<div class="item-sub">UID ${d.id}</div>` +
+        `<div class="item-sub">상태 ${status}${status === "suspended" ? ` · 해제 예정 ${until}` : ""}</div>`;
+
+      const liftBtn = document.createElement("button");
+      liftBtn.className = "btn ghost compact";
+      liftBtn.textContent = "정지 해제";
+      liftBtn.onclick = async () => {
+        if (!confirm("이 사용자의 제재를 해제할까요?")) return;
+        liftBtn.disabled = true;
+        try {
+          const lift = httpsCallable(functions, "liftModeration");
+          await lift({ targetUid: d.id });
+          await renderModeratedUsers();
+        } catch (err) {
+          console.error("liftModeration failed", err);
+          alert(typeof err?.details === "string" ? err.details : "정지 해제 중 오류가 발생했습니다.");
+        } finally {
+          liftBtn.disabled = false;
+        }
+      };
+
+      li.appendChild(left);
+      li.appendChild(liftBtn);
+      moderatedUserList.appendChild(li);
+    });
+  }
+
   onAuthStateChanged(auth, async (user) => {
     if (!user) {
+      restrictionHandled = false;
       location.href = "/";
       return;
+    }
+
+    try {
+      const userSnap = await getDoc(doc(db, "users", user.uid));
+      const me = userSnap.exists() ? userSnap.data() : null;
+      if (me && isRestrictedUser(me)) {
+        if (!restrictionHandled) {
+          restrictionHandled = true;
+          alert(restrictedMessage(me));
+        }
+        await signOut(auth);
+        return;
+      }
+    } catch (_) {
+      // no-op
     }
 
     if (!ADMIN_EMAILS.includes(user.email || "")) {
@@ -178,6 +400,30 @@ document.addEventListener("DOMContentLoaded", () => {
           runCleanupBtn.disabled = false;
         }
       };
+
+      runBackfillBtn.onclick = async () => {
+        if (!confirm("기존 인증 데이터로 방별 연속일 백필을 실행할까요?")) return;
+        runBackfillBtn.disabled = true;
+        if (backfillResult) backfillResult.textContent = "백필 실행 중...";
+        try {
+          const runBackfill = httpsCallable(functions, "backfillGroupMemberStats");
+          const res = await runBackfill({ dryRun: false });
+          const d = res?.data || {};
+          if (backfillResult) {
+            backfillResult.textContent =
+              `백필 완료 · 대상 ${d.memberStatsTargets || 0}, 쓰기 ${d.writes || 0}, 스캔 ${d.scanned || 0}`;
+          }
+        } catch (err) {
+          console.error("backfillGroupMemberStats failed", err);
+          if (backfillResult) backfillResult.textContent = "백필 실행 실패";
+          alert(typeof err?.details === "string" ? err.details : "백필 실행 중 오류가 발생했습니다.");
+        } finally {
+          runBackfillBtn.disabled = false;
+        }
+      };
+
+      await renderReports();
+      await renderModeratedUsers();
     } catch (err) {
       console.error("admin dashboard load failed", err);
       alert("대시보드 로딩 중 오류가 발생했습니다.");

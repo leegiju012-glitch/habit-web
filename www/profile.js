@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, serverTimestamp, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
@@ -26,6 +26,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const avatarBox = document.getElementById("avatarBox");
   const nicknameInput = document.getElementById("nicknameInput");
   const saveNickBtn = document.getElementById("saveNickBtn");
+  const blockedList = document.getElementById("blockedList");
   const streakNow = document.getElementById("streakNow");
   const streakLast = document.getElementById("streakLast");
   const groupStatus = document.getElementById("groupStatus");
@@ -52,6 +53,8 @@ document.addEventListener("DOMContentLoaded", () => {
   let userDocUnsub = null;
   let statsRequestId = 0;
   let selectedPurchaseProduct = null;
+  let blockRenderReqId = 0;
+  let restrictionHandled = false;
   const ADMIN_EMAILS = ["leegiju012@gmail.com"];
 
   backLobbyBtn.onclick = () => { location.href = "/index.html"; };
@@ -77,6 +80,18 @@ document.addEventListener("DOMContentLoaded", () => {
   function isValidNickname(value) {
     const nickname = (value || "").trim();
     return nickname.length >= 2 && nickname.length <= 10;
+  }
+
+  function isRestrictedUser(data = {}) {
+    if (data?.banned === true || data?.moderationStatus === "banned") return true;
+    const until = data?.suspendedUntil;
+    const untilMs = typeof until?.toMillis === "function" ? until.toMillis() : (until ? new Date(until).getTime() : 0);
+    return Number.isFinite(untilMs) && untilMs > Date.now();
+  }
+
+  function restrictedMessage(data = {}) {
+    if (data?.banned === true || data?.moderationStatus === "banned") return "운영자에 의해 계정이 차단되었습니다.";
+    return "계정이 일시 정지 상태입니다.";
   }
 
   function localDateStr(offsetDays = 0) {
@@ -149,6 +164,74 @@ document.addEventListener("DOMContentLoaded", () => {
       console.error("refreshActiveRoomStreak failed", err);
       streakNow.textContent = "현재 챌린지 연속: 0일";
     }
+  }
+
+  async function renderBlockedUsers(data) {
+    if (!blockedList) return;
+    const requestId = ++blockRenderReqId;
+    const blockedUids = Array.isArray(data?.blockedUids)
+      ? data.blockedUids.filter((uid) => typeof uid === "string" && uid)
+      : [];
+
+    if (!blockedUids.length) {
+      blockedList.innerHTML = `
+        <li class="item">
+          <div class="item-left">
+            <div class="item-name">차단한 사용자가 없습니다.</div>
+          </div>
+        </li>
+      `;
+      return;
+    }
+
+    const rows = await Promise.all(blockedUids.map(async (uid) => {
+      try {
+        const snap = await getDoc(doc(db, "users", uid));
+        const u = snap.exists() ? snap.data() : {};
+        return {
+          uid,
+          name: String(u?.nickname || u?.name || uid).trim()
+        };
+      } catch (_) {
+        return { uid, name: uid };
+      }
+    }));
+    if (requestId !== blockRenderReqId) return;
+
+    blockedList.innerHTML = "";
+    rows.forEach(({ uid, name }) => {
+      const li = document.createElement("li");
+      li.className = "item";
+
+      const left = document.createElement("div");
+      left.className = "item-left";
+      left.innerHTML = `
+        <div class="item-name">${name}</div>
+        <div class="item-sub">UID ${uid}</div>
+      `;
+
+      const btn = document.createElement("button");
+      btn.className = "btn ghost compact";
+      btn.textContent = "차단 해제";
+      btn.onclick = async () => {
+        if (!confirm("이 사용자를 차단 해제할까요?")) return;
+        btn.disabled = true;
+        try {
+          const fn = httpsCallable(functions, "unblockUser");
+          await fn({ targetUid: uid });
+          alert("차단이 해제되었습니다.");
+        } catch (err) {
+          console.error("unblockUser failed", err);
+          alert(typeof err?.details === "string" ? err.details : "차단 해제 중 오류가 발생했습니다.");
+        } finally {
+          btn.disabled = false;
+        }
+      };
+
+      li.appendChild(left);
+      li.appendChild(btn);
+      blockedList.appendChild(li);
+    });
   }
 
   saveNickBtn.onclick = async () => {
@@ -294,6 +377,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   onAuthStateChanged(auth, async (user) => {
     if (!user) {
+      restrictionHandled = false;
       location.href = "/";
       return;
     }
@@ -324,6 +408,14 @@ document.addEventListener("DOMContentLoaded", () => {
     userDocUnsub = onSnapshot(userRef, (snap) => {
       if (!snap.exists()) return;
       const data = snap.data();
+      if (isRestrictedUser(data)) {
+        if (!restrictionHandled) {
+          restrictionHandled = true;
+          alert(restrictedMessage(data));
+        }
+        signOut(auth);
+        return;
+      }
       const email = (user.email || "").trim().toLowerCase();
       const isAdmin = !!data.isAdmin || ADMIN_EMAILS.includes(email);
 
@@ -346,6 +438,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       refreshActiveRoomStreak(user, data);
       refreshProStats(user, data);
+      renderBlockedUsers(data);
       goGroupBtn.style.display = data.currentGroupId ? "inline-flex" : "none";
       if (goAdminBtn) goAdminBtn.style.display = isAdmin ? "inline-flex" : "none";
     });
