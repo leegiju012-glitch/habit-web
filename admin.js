@@ -66,16 +66,17 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!reportList) return;
     const reportSnap = await getDocs(query(collection(db, "reports"), orderBy("createdAt", "desc"), limit(30)));
     reportList.innerHTML = "";
+    const openReports = reportSnap.docs.filter((d) => String(d.data()?.status || "open") === "open");
 
-    if (reportSnap.empty) {
+    if (!openReports.length) {
       const li = document.createElement("li");
       li.className = "item";
-      li.innerHTML = '<div class="item-left"><div class="item-name">신고 없음</div><div class="item-sub">최근 신고가 없습니다.</div></div>';
+      li.innerHTML = '<div class="item-left"><div class="item-name">처리대기 신고 없음</div><div class="item-sub">모든 신고가 처리되었습니다.</div></div>';
       reportList.appendChild(li);
       return;
     }
 
-    for (const d of reportSnap.docs) {
+    for (const d of openReports) {
       const r = d.data();
       const created = r.createdAt?.toDate ? r.createdAt.toDate().toLocaleString("ko-KR") : "-";
       const status = String(r.status || "open");
@@ -89,6 +90,35 @@ document.addEventListener("DOMContentLoaded", () => {
         `<div class="item-sub">방 ${r.groupId || "-"} · 신고자 ${r.reporterUid || "-"} · 대상 ${r.targetUid || "-"}</div>` +
         `<div class="item-sub">${r.reason || "-"}</div>` +
         `<div class="item-sub">${created}</div>`;
+      if (r.reportCheckinDate || r.reportCheckinStatus) {
+        const extra = document.createElement("div");
+        extra.className = "item-sub";
+        extra.textContent = `인증일 ${r.reportCheckinDate || "-"} · 상태 ${r.reportCheckinStatus || "-"}`;
+        left.appendChild(extra);
+      }
+      if (r.reportCheckinImageURL) {
+        const link = document.createElement("a");
+        link.href = r.reportCheckinImageURL;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "신고 사진 원본 보기";
+        link.className = "item-sub";
+        link.style.display = "inline-block";
+        link.style.marginTop = "4px";
+        left.appendChild(link);
+
+        const img = document.createElement("img");
+        img.src = r.reportCheckinImageURL;
+        img.alt = "신고된 인증 사진";
+        img.loading = "lazy";
+        img.style.width = "84px";
+        img.style.height = "84px";
+        img.style.objectFit = "cover";
+        img.style.borderRadius = "8px";
+        img.style.marginTop = "8px";
+        img.style.border = "1px solid #d1d5db";
+        left.appendChild(img);
+      }
 
       const actions = document.createElement("div");
       actions.style.display = "flex";

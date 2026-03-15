@@ -303,6 +303,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const nickname = m?.nickname || m?.name || "사용자";
         const streak = Number(s?.currentStreak || 0);
         const isMe = uid === currentUser.uid;
+        const checkinDocId = `${currentGroupId}_${uid}_${today}`;
 
         let imageURL = null;
         let checkinStatus = null;
@@ -376,7 +377,8 @@ document.addEventListener("DOMContentLoaded", () => {
                   groupId: currentGroupId,
                   targetUid: uid,
                   reason,
-                  blockAlso
+                  blockAlso,
+                  checkinId: checkin ? checkinDocId : null
                 });
                 alert(blockAlso ? "신고 및 차단이 완료되었습니다." : "신고가 접수되었습니다.");
               } catch (err) {

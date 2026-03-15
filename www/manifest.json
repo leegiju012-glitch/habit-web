@@ -1,6 +1,7 @@
 {
-  "name": "Challenge",
-  "short_name": "Challenge",
+  "name": "챌린지메이트",
+  "short_name": "챌린지메이트",
+  "description": "ChallengeMate",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0b1220",

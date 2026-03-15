@@ -592,6 +592,7 @@ export const reportUser = onCall(fnOptions, async (request) => {
     const targetUid = String(request.data?.targetUid || "").trim();
     const reason = String(request.data?.reason || "").trim().slice(0, 500);
     const blockAlso = request.data?.blockAlso === true;
+    const checkinId = String(request.data?.checkinId || "").trim();
 
     if (!groupId || !targetUid || !reason) {
       throw new HttpsError("invalid-argument", "groupId, targetUid, reason이 필요합니다.");
@@ -604,13 +605,16 @@ export const reportUser = onCall(fnOptions, async (request) => {
     const reporterRef = db.collection("users").doc(reporterUid);
     const targetRef = db.collection("users").doc(targetUid);
     const reportRef = db.collection("reports").doc();
+    const checkinRef = checkinId ? db.collection("checkins").doc(checkinId) : null;
 
     await db.runTransaction(async (tx) => {
-      const [groupSnap, reporterSnap, targetSnap] = await Promise.all([
+      const readTasks = [
         tx.get(groupRef),
         tx.get(reporterRef),
         tx.get(targetRef)
-      ]);
+      ];
+      if (checkinRef) readTasks.push(tx.get(checkinRef));
+      const [groupSnap, reporterSnap, targetSnap, checkinSnap] = await Promise.all(readTasks);
       if (!groupSnap.exists) throw new Error("ROOM_NOT_FOUND");
       if (!targetSnap.exists) throw new Error("NOT_MEMBER");
 
@@ -620,11 +624,29 @@ export const reportUser = onCall(fnOptions, async (request) => {
         throw new Error("NOT_MEMBER");
       }
 
+      let reportCheckinId = null;
+      let reportCheckinDate = null;
+      let reportCheckinImageURL = null;
+      let reportCheckinStatus = null;
+      if (checkinRef && checkinSnap?.exists) {
+        const checkin = checkinSnap.data() || {};
+        if (checkin.groupId === groupId && checkin.uid === targetUid) {
+          reportCheckinId = checkinRef.id;
+          reportCheckinDate = String(checkin.date || "").trim() || null;
+          reportCheckinImageURL = String(checkin.imageURL || "").trim() || null;
+          reportCheckinStatus = String(checkin.status || "pending");
+        }
+      }
+
       tx.set(reportRef, {
         groupId,
         reporterUid,
         targetUid,
         reason,
+        reportCheckinId,
+        reportCheckinDate,
+        reportCheckinImageURL,
+        reportCheckinStatus,
         status: "open",
         createdAt: FieldValue.serverTimestamp()
       });
